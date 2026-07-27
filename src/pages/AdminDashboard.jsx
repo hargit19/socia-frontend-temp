@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   approveNPO, rejectNPO, approveProject, rejectProject, approveInfluencer, rejectInfluencer,
   listNPOs, listProjects, listInfluencers, getAdminStats,
-  getProjectInfluencers, getInfluencerActiveProjects,
+  getProjectInfluencers, getInfluencerActiveProjects, signInAdmin,
+  getLiveActivity, signUpAdmin, listAdmins,
 } from '../api/api';
 
 const S = `
@@ -157,6 +158,21 @@ tbody tr:last-child td{border-bottom:none;}
 .modal-sub{font-size:12.5px;color:var(--muted);margin-bottom:16px;}
 .fi{width:100%;padding:10px 13px;border:1.5px solid var(--border);border-radius:9px;font-size:13px;font-family:'Inter',sans-serif;color:var(--ink);background:var(--surface);outline:none;transition:border .15s;}
 .fi:focus{border-color:var(--teal);}
+.auth-page{min-height:100vh;display:grid;place-items:center;padding:24px;background:linear-gradient(135deg,var(--ink),var(--ink-mid));}
+.auth-card{width:min(100%,880px);display:grid;grid-template-columns:.85fr 1.15fr;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 24px 65px rgba(0,0,0,.35);}
+.auth-side{padding:46px 38px;background:linear-gradient(160deg,var(--ink),var(--ink-light));color:#fff;display:flex;flex-direction:column;justify-content:space-between;}
+.auth-side h1{font-family:'Sora',sans-serif;font-size:34px;line-height:1.15;margin:24px 0 12px;}
+.auth-side p{line-height:1.6;color:rgba(255,255,255,.65)}
+.auth-panel{padding:42px;}
+.auth-panel h2{font-family:'Sora',sans-serif;font-size:25px;margin-bottom:6px;color:var(--ink);}
+.auth-panel>p{font-size:14px;color:var(--muted);margin-bottom:22px}
+.auth-error{background:var(--rose-lo);color:var(--rose);border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:14px}
+.auth-form{display:grid;gap:14px}
+.auth-form .fg{margin:0}
+.auth-form label{display:block;font-size:12.5px;font-weight:600;color:var(--ink);margin-bottom:6px;}
+.auth-note{font-size:12px;color:var(--muted);line-height:1.5}
+.auth-form .btn{justify-content:center}
+@media(max-width:700px){.auth-card{grid-template-columns:1fr}.auth-side{padding:28px;min-height:190px}.auth-side h1{font-size:27px;margin:12px 0}.auth-panel{padding:28px 22px}}
 `;
 
 const CATBADGE = {
@@ -164,6 +180,37 @@ const CATBADGE = {
 };
 
 const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+const timeAgo = (iso) => {
+  if (!iso) return '—';
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  return fmt(iso);
+};
+
+const ACTIVITY_META = {
+  npo_registered: { icon: '🏢', bg: 'rgba(14,165,233,0.1)', text: (label) => `<b>${label}</b> registered as a new NPO` },
+  project_submitted: { icon: '📋', bg: 'rgba(232,160,32,0.1)', text: (label) => `<b>${label}</b> submitted for admin review` },
+  influencer_registered: { icon: '🤳', bg: 'rgba(124,58,237,0.1)', text: (label) => `New creator <b>${label}</b> registered` },
+};
+
+const CATEGORY_META = {
+  Education: { emoji: '🏫', color: 'var(--sky)' },
+  'Food Relief': { emoji: '🍽️', color: 'var(--amber)' },
+  Healthcare: { emoji: '🏥', color: 'var(--rose)' },
+  Refugees: { emoji: '🤝', color: 'var(--violet)' },
+  Environment: { emoji: '♻️', color: 'var(--teal)' },
+  Housing: { emoji: '🏘️', color: 'var(--sky)' },
+  Children: { emoji: '👶', color: 'var(--amber)' },
+};
+const CATEGORY_COLOR_CYCLE = ['var(--teal)', 'var(--sky)', 'var(--amber)', 'var(--rose)', 'var(--violet)'];
 
 export default function AdminDashboard() {
   const [page, setPage] = useState('dashboard');
@@ -178,8 +225,16 @@ export default function AdminDashboard() {
   const [pendingInfl, setPendingInfl] = useState([]);
   const [approvedInfluencers, setApprovedInfluencers] = useState([]);
   const [approvedProjects, setApprovedProjects] = useState([]);
-  const [stats, setStats] = useState({ npos: 0, influencers: 0, live_projects: 0 });
+  const [stats, setStats] = useState({ npos: 0, influencers: 0, live_projects: 0, categories: [] });
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Add-admin form
+  const [newAdminForm, setNewAdminForm] = useState({ name: '', email: '', password: '' });
+  const [addingAdmin, setAddingAdmin] = useState(false);
+  const [addAdminError, setAddAdminError] = useState('');
+  const [addAdminSuccess, setAddAdminSuccess] = useState('');
 
   // Detail views
   const [selectedInfluencer, setSelectedInfluencer] = useState(null);
@@ -188,16 +243,25 @@ export default function AdminDashboard() {
   const [detailProjectInfluencers, setDetailProjectInfluencers] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  const [authUser, setAuthUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('socia_admin_session')); } catch { return null; }
+  });
+  const [authFields, setAuthFields] = useState({ name: '', password: '' });
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [npoRes, projRes, inflRes, statsRes, approvedInflRes, approvedProjRes] = await Promise.all([
+      const [npoRes, projRes, inflRes, statsRes, approvedInflRes, approvedProjRes, activityRes, adminsRes] = await Promise.all([
         listNPOs('pending'),
         listProjects('pending'),
         listInfluencers('pending'),
         getAdminStats(),
         listInfluencers('approved'),
         listProjects('approved'),
+        getLiveActivity(),
+        listAdmins(),
       ]);
       setPendingNPOs(npoRes.data || []);
       setPendingProjs(projRes.data || []);
@@ -205,15 +269,63 @@ export default function AdminDashboard() {
       setStats(statsRes.data || {});
       setApprovedInfluencers(approvedInflRes.data || []);
       setApprovedProjects(approvedProjRes.data || []);
+      setRecentActivity(activityRes.data || []);
+      setAdmins(adminsRes.data || []);
     } catch (e) {
       console.error('Failed to load admin data:', e.message);
     }
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { if (authUser) fetchAll(); }, [fetchAll, authUser]);
 
   const nav = (p) => setPage(p);
+
+  const handleAuth = async (event) => {
+    event.preventDefault();
+    setAuthError(''); setAuthLoading(true);
+    try {
+      const response = await signInAdmin({ name: authFields.name, password: authFields.password });
+      const admin = response.data.user;
+      localStorage.setItem('socia_admin_session', JSON.stringify(admin));
+      setAuthUser(admin);
+    } catch (error) {
+      setAuthError(error.response?.data?.error || 'Unable to sign in. Please try again.');
+    } finally { setAuthLoading(false); }
+  };
+
+  const handleSignOut = () => {
+    localStorage.removeItem('socia_admin_session');
+    setAuthUser(null);
+  };
+
+  const handleAddAdmin = async (event) => {
+    event.preventDefault();
+    setAddAdminError(''); setAddAdminSuccess(''); setAddingAdmin(true);
+    try {
+      await signUpAdmin({ name: newAdminForm.name, email: newAdminForm.email || undefined, password: newAdminForm.password });
+      setAddAdminSuccess(`${newAdminForm.name} was added as an admin.`);
+      setNewAdminForm({ name: '', email: '', password: '' });
+      const res = await listAdmins();
+      setAdmins(res.data || []);
+    } catch (error) {
+      setAddAdminError(error.response?.data?.error || 'Unable to add admin. Please try again.');
+    } finally { setAddingAdmin(false); }
+  };
+
+  if (!authUser) {
+    return <><style>{S}</style><main className="auth-page"><section className="auth-card">
+      <aside className="auth-side"><div><img src="/Socia Logo.png" alt="Socia" style={{ height: 32, width: 'auto' }} /><h1>Platform control center.</h1><p>Review and approve NPOs, creators, and campaigns across Socia.</p></div><small>Restricted to authorized Socia administrators</small></aside>
+      <div className="auth-panel"><h2>Admin sign in</h2><p>Sign in with your administrator credentials to continue.</p>
+        {authError && <div className="auth-error">{authError}</div>}
+        <form className="auth-form" onSubmit={handleAuth}>
+          <div className="fg"><label>Full name</label><input className="fi" required value={authFields.name} onChange={e => setAuthFields(f => ({ ...f, name: e.target.value }))} autoComplete="username" /></div>
+          <div className="fg"><label>Password</label><input className="fi" required type="password" value={authFields.password} onChange={e => setAuthFields(f => ({ ...f, password: e.target.value }))} autoComplete="current-password" /></div>
+          <button className="btn btn-teal" type="submit" disabled={authLoading}>{authLoading ? 'Please wait…' : 'Sign in'}</button>
+        </form>
+      </div>
+    </section></main></>;
+  }
 
   const totalPending = pendingNPOs.length + pendingProjs.length + pendingInfl.length;
 
@@ -273,6 +385,7 @@ export default function AdminDashboard() {
     'proj-detail': <><span style={{ cursor:'pointer', color:'var(--teal)' }} onClick={() => nav('proj-live')}>Live Projects</span><span className="sep">/</span><b>{selectedProject?.title || '…'}</b></>,
     payouts: <><span>Platform</span><span className="sep">/</span><b>Payouts & Fees</b></>,
     compliance: <><span>Platform</span><span className="sep">/</span><b>Compliance</b></>,
+    'admin-team': <><span>Platform</span><span className="sep">/</span><b>Admin Access</b></>,
     'influencer-review': <><span>Creators</span><span className="sep">/</span><b>Influencer Approvals</b></>,
   };
 
@@ -289,9 +402,9 @@ export default function AdminDashboard() {
               <span className="sb-badge">Admin</span>
             </div>
             <div className="sb-user">
-              <div className="sb-avatar">AD</div>
+              <div className="sb-avatar">{(authUser.name || 'A').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}</div>
               <div>
-                <div className="sb-uname">Alex Durant</div>
+                <div className="sb-uname">{authUser.name}</div>
                 <div className="sb-urole">Platform Administrator</div>
               </div>
             </div>
@@ -338,6 +451,7 @@ export default function AdminDashboard() {
             {[
               { key: 'payouts', icon: '💵', label: 'Payouts & Fees' },
               { key: 'compliance', icon: '🛡️', label: 'Compliance', pill: '3', pillClass: 'alert' },
+              { key: 'admin-team', icon: '🔐', label: 'Admin Access' },
             ].map(({ key, icon, label, pill, pillClass }) => (
               <div key={key} className={`nav-link${page === key ? ' active' : ''}`} onClick={() => nav(key)}>
                 <span className="nav-icon">{icon}</span> {label}
@@ -358,7 +472,8 @@ export default function AdminDashboard() {
               </div>
               <div className="icon-btn">🔔<span className="alert-dot" /></div>
               <div className="icon-btn">⚙️</div>
-              <div className="sb-avatar" style={{ cursor:'pointer' }}>AD</div>
+              <div className="sb-avatar" style={{ cursor:'pointer' }}>{(authUser.name || 'A').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}</div>
+              <div className="icon-btn" title="Sign out" onClick={handleSignOut}>🚪</div>
             </div>
           </header>
 
@@ -420,20 +535,29 @@ export default function AdminDashboard() {
                     <div className="card">
                       <div className="card-title">Projects by Cause Category</div>
                       <div className="card-sub">Distribution of all live campaigns</div>
-                      <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-                        {[
-                          ['🏫 Education', '12 projects · 35%', 35, 'var(--sky)'],
-                          ['🍽️ Food Relief', '8 projects · 24%', 24, 'var(--amber)'],
-                          ['🏥 Healthcare', '6 projects · 18%', 18, 'var(--rose)'],
-                          ['🤝 Refugees', '5 projects · 15%', 15, 'var(--violet)'],
-                          ['♻️ Environment', '3 projects · 8%', 8, 'var(--teal)'],
-                        ].map(([label, text, pct, color]) => (
-                          <div key={label}>
-                            <div className="flex jb ic" style={{ fontSize:12, marginBottom:4 }}><span>{label}</span><span style={{ fontWeight:700 }}>{text}</span></div>
-                            <div className="prog-wrap"><div className="prog-bar" style={{ width:`${pct}%`, background:color }} /></div>
+                      {(!stats.categories || stats.categories.length === 0) && (
+                        <div style={{ color:'var(--muted)', fontSize:13, padding:'12px 0' }}>No live campaigns yet.</div>
+                      )}
+                      {stats.categories && stats.categories.length > 0 && (() => {
+                        const total = stats.categories.reduce((s, c) => s + Number(c.count), 0);
+                        return (
+                          <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                            {stats.categories.map((c, i) => {
+                              const meta = CATEGORY_META[c.category] || { emoji: '📁', color: CATEGORY_COLOR_CYCLE[i % CATEGORY_COLOR_CYCLE.length] };
+                              const pct = total ? Math.round((Number(c.count) / total) * 100) : 0;
+                              return (
+                                <div key={c.category}>
+                                  <div className="flex jb ic" style={{ fontSize:12, marginBottom:4 }}>
+                                    <span>{meta.emoji} {c.category}</span>
+                                    <span style={{ fontWeight:700 }}>{c.count} project{Number(c.count) === 1 ? '' : 's'} · {pct}%</span>
+                                  </div>
+                                  <div className="prog-wrap"><div className="prog-bar" style={{ width:`${pct}%`, background:meta.color }} /></div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -478,22 +602,21 @@ export default function AdminDashboard() {
                     </div>
                     <div className="card">
                       <div className="card-title" style={{ marginBottom:12 }}>Recent Activity</div>
-                      {[
-                        { ic:'✅', bg:'rgba(15,155,142,0.1)', txt:'<b>Ghana School Build</b> reached 85% of funding goal', t:'12 min ago' },
-                        { ic:'🤳', bg:'rgba(124,58,237,0.1)', txt:'New creator <b>@sofia.creates</b> registered & KYC passed', t:'1 hour ago' },
-                        { ic:'📋', bg:'rgba(232,160,32,0.1)', txt:'<b>IRC</b> submitted "Refugee Housing – Jordan" for review', t:'2 hours ago' },
-                        { ic:'🏢', bg:'rgba(14,165,233,0.1)', txt:'<b>Habitat for Humanity</b> completed NPO registration', t:'3 hours ago' },
-                        { ic:'⚠️', bg:'rgba(232,54,93,0.1)', txt:'Content revision flag on <b>Feed the Future</b> story set', t:'5 hours ago' },
-                        { ic:'💵', bg:'rgba(15,155,142,0.1)', txt:'$4,820 in creator stipends processed · 6 recipients', t:'Yesterday' },
-                      ].map((n, i) => (
-                        <div key={i} className="notif-row">
-                          <div className="notif-ic" style={{ background: n.bg }}>{n.ic}</div>
-                          <div>
-                            <div className="notif-txt" dangerouslySetInnerHTML={{ __html: n.txt }} />
-                            <div className="notif-t">{n.t}</div>
+                      {recentActivity.length === 0 && (
+                        <div style={{ color:'var(--muted)', fontSize:13, padding:'12px 0' }}>No recent activity yet.</div>
+                      )}
+                      {recentActivity.map((a, i) => {
+                        const meta = ACTIVITY_META[a.type] || { icon: '📌', bg: 'rgba(100,116,139,0.1)', text: (l) => l };
+                        return (
+                          <div key={i} className="notif-row">
+                            <div className="notif-ic" style={{ background: meta.bg }}>{meta.icon}</div>
+                            <div>
+                              <div className="notif-txt" dangerouslySetInnerHTML={{ __html: meta.text(a.label) }} />
+                              <div className="notif-t">{timeAgo(a.ts)}</div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </>
@@ -673,10 +796,10 @@ export default function AdminDashboard() {
                   </div>
                   <div className="kpi-grid">
                     {[
-                      { icon:'🤳', bg:'rgba(124,58,237,0.1)', lbl:'Total Creators', val:'312', delta:'↑ 28 this month', type:'up' },
-                      { icon:'✅', bg:'rgba(15,155,142,0.1)', lbl:'KYC Approved', val:'287', delta:'92%', type:'up' },
-                      { icon:'📤', bg:'rgba(232,160,32,0.12)', lbl:'Active on Campaigns', val:'148', delta:'This month', type:'up' },
-                      { icon:'💵', bg:'rgba(14,165,233,0.1)', lbl:'Stipends Paid Out', val:'$84K', delta:'↑ 38% YoY', type:'up' },
+                      { icon:'🤳', bg:'rgba(124,58,237,0.1)', lbl:'Total Creators', val:String(stats.total_influencers ?? 0), delta:`${stats.pending_influencers ?? 0} pending`, type:'up' },
+                      { icon:'✅', bg:'rgba(15,155,142,0.1)', lbl:'KYC Approved', val:String(stats.influencers ?? 0), delta: stats.total_influencers ? `${Math.round((stats.influencers / stats.total_influencers) * 100)}%` : '0%', type:'up' },
+                      { icon:'📤', bg:'rgba(232,160,32,0.12)', lbl:'Active on Campaigns', val:String(stats.active_creators ?? 0), delta:'Enrolled in a project', type:'up' },
+                      { icon:'💵', bg:'rgba(14,165,233,0.1)', lbl:'Stipends Paid Out', val:`$${(stats.stipends_paid ?? 0).toLocaleString()}`, delta:`${stats.stipends_pending_count ?? 0} pending ($${(stats.stipends_pending_amount ?? 0).toLocaleString()})`, type:'up' },
                     ].map(k => (
                       <div key={k.lbl} className="kpi-card">
                         <div className="kpi-icon" style={{ background: k.bg }}>{k.icon}</div>
@@ -1058,6 +1181,69 @@ export default function AdminDashboard() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                </>
+              )}
+
+              {/* ── ADMIN ACCESS ── */}
+              {page === 'admin-team' && (
+                <>
+                  <div className="ph">
+                    <div className="ph-left"><div className="ph-title">Admin Access</div><div className="ph-sub">Add new administrators and manage platform access</div></div>
+                  </div>
+                  <div className="g-21">
+                    <div className="card">
+                      <div className="card-title" style={{ marginBottom:14 }}>All Admins ({admins.length})</div>
+                      {loading && <div style={{ color:'var(--muted)', fontSize:13 }}>Loading…</div>}
+                      {!loading && admins.length === 0 && <div style={{ color:'var(--muted)', fontSize:13 }}>No admins found.</div>}
+                      {admins.length > 0 && (
+                        <div className="tbl-wrap">
+                          <table>
+                            <thead><tr><th>Name</th><th>Email</th><th>Added</th></tr></thead>
+                            <tbody>
+                              {admins.map(a => {
+                                const initials = (a.name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+                                return (
+                                  <tr key={a.id}>
+                                    <td>
+                                      <div className="flex ic gap10">
+                                        <div className="av" style={{ background:'linear-gradient(135deg,var(--teal),var(--sky))' }}>{initials}</div>
+                                        <div style={{ fontWeight:600 }}>{a.name}{authUser?.name === a.name ? <span style={{ color:'var(--muted)', fontWeight:500 }}> (you)</span> : ''}</div>
+                                      </div>
+                                    </td>
+                                    <td style={{ fontSize:12, color:'var(--muted)' }}>{a.email || '—'}</td>
+                                    <td className="td-mono">{fmt(a.created_at)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                    <div className="card">
+                      <div className="card-title">Add New Admin</div>
+                      <div className="card-sub">They can sign in immediately with these credentials</div>
+                      {addAdminError && <div style={{ background:'var(--rose-lo)', color:'var(--rose)', borderRadius:8, padding:'10px 12px', fontSize:12.5, marginBottom:14 }}>{addAdminError}</div>}
+                      {addAdminSuccess && <div style={{ background:'#DCFCE7', color:'#16A34A', borderRadius:8, padding:'10px 12px', fontSize:12.5, marginBottom:14 }}>✅ {addAdminSuccess}</div>}
+                      <form onSubmit={handleAddAdmin}>
+                        <div style={{ marginBottom:14 }}>
+                          <label style={{ display:'block', fontSize:12, fontWeight:600, color:'var(--ink)', marginBottom:5 }}>Full Name *</label>
+                          <input className="fi" required value={newAdminForm.name} onChange={e => setNewAdminForm(f => ({ ...f, name: e.target.value }))} placeholder="Jane Doe" />
+                        </div>
+                        <div style={{ marginBottom:14 }}>
+                          <label style={{ display:'block', fontSize:12, fontWeight:600, color:'var(--ink)', marginBottom:5 }}>Email (optional — for approval notifications)</label>
+                          <input className="fi" type="email" value={newAdminForm.email} onChange={e => setNewAdminForm(f => ({ ...f, email: e.target.value }))} placeholder="jane@socia.com" />
+                        </div>
+                        <div style={{ marginBottom:16 }}>
+                          <label style={{ display:'block', fontSize:12, fontWeight:600, color:'var(--ink)', marginBottom:5 }}>Password *</label>
+                          <input className="fi" required type="password" minLength={8} value={newAdminForm.password} onChange={e => setNewAdminForm(f => ({ ...f, password: e.target.value }))} placeholder="At least 8 characters" />
+                        </div>
+                        <button className="btn btn-teal" type="submit" disabled={addingAdmin} style={{ width:'100%', justifyContent:'center' }}>
+                          {addingAdmin ? 'Adding…' : '+ Add Admin'}
+                        </button>
+                      </form>
+                    </div>
                   </div>
                 </>
               )}

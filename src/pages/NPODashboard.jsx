@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { registerNPO, createProject, submitProject } from '../api/api';
+import { useState, useEffect } from 'react';
+import { registerNPO, updateNPO, createProject, submitProject, signInNPO, signUpNPO, getNPOProjects } from '../api/api';
 
 const S = `
 :root{
@@ -162,16 +162,50 @@ tbody tr:last-child td{border-bottom:none;}
 .tog input:checked + .tog-track{background:var(--teal-mid);}
 .tog-thumb{position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2);}
 .tog input:checked ~ .tog-thumb{transform:translateX(18px);}
+.nav-item.locked{opacity:0.4;cursor:not-allowed;}
+.nav-item.locked:hover{background:transparent;color:rgba(255,255,255,.55);}
+.nav-item.locked .nav-badge{background:rgba(255,255,255,.18);}
+.alert-banner{background:var(--amber-light);border:1px solid var(--amber-mid);border-radius:10px;padding:12px 16px;font-size:12.5px;color:var(--amber);margin-bottom:18px;}
+.auth-page{min-height:100vh;display:grid;place-items:center;padding:24px;background:linear-gradient(135deg,#0A1730,var(--teal));}
+.auth-card{width:min(100%,880px);display:grid;grid-template-columns:.85fr 1.15fr;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 24px 65px rgba(0,0,0,.3);}
+.auth-side{padding:46px 38px;background:linear-gradient(160deg,var(--navy),var(--teal));color:#fff;display:flex;flex-direction:column;justify-content:space-between;}
+.auth-side h1{font-family:'Sora',sans-serif;font-size:34px;line-height:1.15;margin:24px 0 12px;}
+.auth-side p{line-height:1.6;color:rgba(255,255,255,.8)}
+.auth-panel{padding:42px;}
+.auth-panel h2{font-family:'Sora',sans-serif;font-size:25px;margin-bottom:6px}
+.auth-panel>p{font-size:14px;color:var(--slate);margin-bottom:22px}
+.auth-tabs{display:flex;background:var(--bg);padding:4px;border-radius:10px;margin-bottom:20px}
+.auth-tabs button{flex:1;border:0;background:transparent;padding:9px;border-radius:7px;font:600 13px 'DM Sans',sans-serif;color:var(--slate);cursor:pointer}
+.auth-tabs button.active{background:#fff;color:var(--navy);box-shadow:0 1px 4px rgba(0,0,0,.12)}
+.auth-error{background:var(--rose-light);color:var(--rose);border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:14px}
+.auth-form{display:grid;gap:14px}
+.auth-form .fg{margin:0}
+.auth-note{font-size:12px;color:var(--slate);line-height:1.5}
+.auth-form .btn{justify-content:center}
+@media(max-width:700px){.auth-card{grid-template-columns:1fr}.auth-side{padding:28px;min-height:190px}.auth-side h1{font-size:27px;margin:12px 0}.auth-panel{padding:28px 22px}}
 `;
 
 const NPO_STEPS = ['NPO Account', 'Basic Info', 'Certification', 'Bank Account'];
 const CAUSE_OPTS = ['🏫 Education','🍽️ Food Relief','🌍 International Aid','🏥 Healthcare','♻️ Environment','🏘️ Housing','🤝 Refugees','👶 Children'];
+const GATED_PAGES = ['proj-list', 'proj-new', 'proj-targets', 'proj-materials', 'proj-reports'];
+const isRegistrationComplete = (u) => Boolean(u && u.phone && u.kyc_id_number && u.bank_account);
+const STATUS_META = {
+  draft:     { label: 'Draft',           cls: 'b-gray' },
+  pending:   { label: 'Pending Review',  cls: 'b-amber' },
+  approved:  { label: 'Approved',        cls: 'b-teal' },
+  rejected:  { label: 'Rejected',        cls: 'b-rose' },
+  open:      { label: 'Active',          cls: 'b-teal' },
+  invited:   { label: 'Active',          cls: 'b-teal' },
+  closed:    { label: 'Closed',          cls: 'b-gray' },
+  completed: { label: 'Completed',       cls: 'b-navy' },
+};
 
-const SAMPLE_PROJECTS = [
-  { emoji:'🏫', name:'Build a School in Rural Ghana', status:'Active', raised:54200, goal:75000, color:'linear-gradient(135deg,#1565C0,#0D9488)', statusClass:'b-teal', deadline:'May 10', creators:8, tags:['Education','Africa'] },
-  { emoji:'🍽️', name:'Feed the Future – Nairobi', status:'Active', raised:88000, goal:100000, color:'linear-gradient(135deg,#D97706,#FB8C00)', statusClass:'b-teal', deadline:'Apr 25', creators:11, tags:['Food Relief','Kenya'] },
-  { emoji:'🤝', name:'Legal Aid for Syrian Refugees', status:'Draft', raised:0, goal:50000, color:'linear-gradient(135deg,#1A237E,#0891B2)', statusClass:'b-gray', deadline:'May 20', creators:0, tags:['Refugees','Legal Aid'] },
-  { emoji:'💉', name:'Mobile Clinics for Rural Kenya', status:'In Review', raised:0, goal:150000, color:'linear-gradient(135deg,#004D40,#26A69A)', statusClass:'b-amber', deadline:'Jun 1', creators:0, tags:['Healthcare','Kenya'] },
+const PROJ_GRADIENTS = [
+  'linear-gradient(135deg,#1565C0,#0D9488)',
+  'linear-gradient(135deg,#D97706,#FB8C00)',
+  'linear-gradient(135deg,#1A237E,#0891B2)',
+  'linear-gradient(135deg,#004D40,#26A69A)',
+  'linear-gradient(135deg,#7C3AED,#4F46E5)',
 ];
 
 export default function NPODashboard() {
@@ -181,18 +215,137 @@ export default function NPODashboard() {
   const [submitted, setSubmitted] = useState(false);
   const [projectSubmitted, setProjectSubmitted] = useState(false);
   const [causes, setCauses] = useState([]);
-  const [orgForm, setOrgForm] = useState({ fullName:'', title:'', email:'', phone:'', country:'United States', password:'' });
-  const [basicForm, setBasicForm] = useState({ legalName:'', displayName:'', ein:'', year:'', website:'', officialEmail:'' });
-  const [bankForm, setBankForm] = useState({ holder:'', bank:'Chase Bank', account:'', routing:'', type:'Checking' });
+  const [orgForm, setOrgForm] = useState({ fullName:'', title:'', email:'', phone:'', country:'Japan' });
+  const [basicForm, setBasicForm] = useState({ legalName:'', displayName:'', year:'', website:'', officialEmail:'' });
+  const [kycForm, setKycForm] = useState({ idType:'Passport', idNumber:'' });
+  const [bankForm, setBankForm] = useState({ holder:'', bank:'', branch:'', account:'', type:'Checking' });
   const [projForm, setProjForm] = useState({ name:'', category:'♻️ Environment & Clean Water', platform:'Kickstarter', url:'', description:'', goal:'', startDate:'', endDate:'', impactStatement:'' });
+  const [regError, setRegError] = useState('');
+  const [lockedNotice, setLockedNotice] = useState(false);
 
-  const nav = (p) => setPage(p);
+  const [authUser, setAuthUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('socia_npo_session')); } catch { return null; }
+  });
+  const [authMode, setAuthMode] = useState('signin');
+  const [authFields, setAuthFields] = useState({ name: '', email: '', password: '' });
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [npoId, setNpoId] = useState(() => {
+    const stored = localStorage.getItem('socia_npo_id');
+    return stored ? Number(stored) : null;
+  });
+
+  const [myProjects, setMyProjects] = useState([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+
+  const fetchMyProjects = (id) => {
+    if (!id) return;
+    setProjectsLoading(true);
+    getNPOProjects(id)
+      .then(r => setMyProjects(r.data || []))
+      .catch(() => setMyProjects([]))
+      .finally(() => setProjectsLoading(false));
+  };
+
+  useEffect(() => { fetchMyProjects(npoId); }, [npoId]);
+
+  const registrationComplete = isRegistrationComplete(authUser);
+
+  const nav = (p) => {
+    if (GATED_PAGES.includes(p) && !registrationComplete) {
+      setLockedNotice(true);
+      setPage('npo-overview');
+      return;
+    }
+    setLockedNotice(false);
+    setPage(p);
+  };
+
+  const handleAuth = async (event) => {
+    event.preventDefault();
+    setAuthError(''); setAuthLoading(true);
+    try {
+      const response = authMode === 'signin'
+        ? await signInNPO({ name: authFields.name, password: authFields.password })
+        : await signUpNPO({ name: authFields.name, email: authFields.email, password: authFields.password });
+      const org = response.data.user;
+      localStorage.setItem('socia_npo_session', JSON.stringify(org));
+      localStorage.setItem('socia_npo_id', String(org.id));
+      setNpoId(org.id);
+      setAuthUser(org);
+      setOrgForm(f => ({ ...f, fullName: org.admin_name || f.fullName, email: org.email || f.email, phone: org.phone || f.phone, country: org.country || f.country }));
+      setPage(authMode === 'signup' ? 'npo-register' : 'npo-overview');
+    } catch (error) {
+      setAuthError(error.response?.data?.error || 'Unable to authenticate. Please try again.');
+    } finally { setAuthLoading(false); }
+  };
+
+  const handleSignOut = () => {
+    localStorage.removeItem('socia_npo_session');
+    localStorage.removeItem('socia_npo_id');
+    setAuthUser(null);
+    setNpoId(null);
+    setPage('npo-overview');
+  };
+
+  if (!authUser) {
+    return <><style>{S}</style><main className="auth-page"><section className="auth-card">
+      <aside className="auth-side"><div><img src="/Socia Logo.png" alt="Socia" style={{ height: 32, width: 'auto' }} /><h1>Fund your mission. Reach real creators.</h1><p>Register your nonprofit and launch crowdfunding campaigns creators can promote.</p></div><small>For nonprofits and NGOs</small></aside>
+      <div className="auth-panel"><h2>{authMode === 'signin' ? 'Welcome back' : 'Register your organization'}</h2><p>{authMode === 'signin' ? 'Sign in to manage your campaigns and organization profile.' : 'Create your account, then complete the secure organization onboarding.'}</p>
+        <div className="auth-tabs"><button className={authMode === 'signin' ? 'active' : ''} onClick={() => { setAuthMode('signin'); setAuthError(''); }}>Sign in</button><button className={authMode === 'signup' ? 'active' : ''} onClick={() => { setAuthMode('signup'); setAuthError(''); }}>Create account</button></div>
+        {authError && <div className="auth-error">{authError}</div>}
+        <form className="auth-form" onSubmit={handleAuth}>
+          <div className="fg"><label className="fl">Full name</label><input className="fi" required value={authFields.name} onChange={e => setAuthFields(f => ({ ...f, name: e.target.value }))} autoComplete="name" /></div>
+          {authMode === 'signup' && <div className="fg"><label className="fl">Email address</label><input className="fi" required type="email" value={authFields.email} onChange={e => setAuthFields(f => ({ ...f, email: e.target.value }))} autoComplete="email" /></div>}
+          <div className="fg"><label className="fl">Password</label><input className="fi" required type="password" minLength="8" value={authFields.password} onChange={e => setAuthFields(f => ({ ...f, password: e.target.value }))} autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'} /></div>
+          {authMode === 'signup' && <p className="auth-note">Next, we'll collect your organization's basic info, certification documents, and recipient bank details using the existing onboarding flow.</p>}
+          <button className="btn btn-teal" type="submit" disabled={authLoading}>{authLoading ? 'Please wait…' : authMode === 'signin' ? 'Sign in' : 'Create account'}</button>
+        </form>
+      </div>
+    </section></main></>;
+  }
 
   const handleSubmitNPO = async () => {
+    const missing = [];
+    if (!orgForm.phone) missing.push('phone number');
+    if (!kycForm.idNumber) missing.push('ID number');
+    if (!bankForm.account || !bankForm.bank || !bankForm.branch || !bankForm.holder) missing.push('bank account details');
+    if (missing.length) {
+      setRegError(`Please complete: ${missing.join(', ')} before submitting.`);
+      return;
+    }
+    setRegError('');
     setSubmitting(true);
     try {
-      await registerNPO({ ...orgForm, ...basicForm, ...bankForm, causes });
+      const payload = { ...orgForm, ...basicForm, ...kycForm, ...bankForm, causes };
+      const res = npoId
+        ? await updateNPO(npoId, payload)
+        : await registerNPO(payload);
+      const id = res.data?.id;
+      if (id) {
+        setNpoId(id);
+        localStorage.setItem('socia_npo_id', String(id));
+      }
+      const updatedUser = {
+        ...authUser,
+        org_name: basicForm.legalName || basicForm.displayName || authUser.org_name,
+        admin_name: orgForm.fullName || authUser.admin_name,
+        org_type: orgForm.title || authUser.org_type,
+        email: orgForm.email || authUser.email,
+        phone: orgForm.phone,
+        country: orgForm.country,
+        website: basicForm.website,
+        kyc_id_type: kycForm.idType,
+        kyc_id_number: kycForm.idNumber,
+        bank_name: bankForm.bank,
+        bank_account: bankForm.account,
+        bank_branch: bankForm.branch,
+        bank_account_name: bankForm.holder,
+      };
+      setAuthUser(updatedUser);
+      localStorage.setItem('socia_npo_session', JSON.stringify(updatedUser));
       setSubmitted(true);
+      setLockedNotice(false);
       nav('npo-overview');
     } catch (e) {
       console.error(e);
@@ -203,8 +356,9 @@ export default function NPODashboard() {
   const handleSubmitProject = async () => {
     setSubmitting(true);
     try {
-      await createProject({ ...projForm });
+      await createProject({ ...projForm, npo_id: npoId, organization: authUser.org_name || authUser.admin_name });
       setProjectSubmitted(true);
+      fetchMyProjects(npoId);
       nav('proj-list');
     } catch (e) {
       console.error(e);
@@ -241,9 +395,9 @@ export default function NPODashboard() {
             <span className="sb-logo-badge">NPO</span>
           </div>
           <div className="sb-org">
-            <div className="sb-org-avatar">HP</div>
+            <div className="sb-org-avatar">{(authUser.org_name || authUser.admin_name || 'NP').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}</div>
             <div>
-              <div className="sb-org-name">HopeForward Foundation</div>
+              <div className="sb-org-name">{authUser.org_name || authUser.admin_name}</div>
               <div className="sb-org-type">Nonprofit Organization</div>
             </div>
           </div>
@@ -273,12 +427,15 @@ export default function NPODashboard() {
               { key: 'proj-targets', icon: '🎯', label: 'Targets & Timelines' },
               { key: 'proj-materials', icon: '🖼️', label: 'Promotional Materials' },
               { key: 'proj-reports', icon: '📊', label: 'Activity Reports', badge: '2' },
-            ].map(({ key, icon, label, badge }) => (
-              <div key={key} className={`nav-item${page === key ? ' active' : ''}`} onClick={() => nav(key)}>
-                <span className="nav-icon">{icon}</span> {label}
-                {badge && <span className="nav-badge">{badge}</span>}
-              </div>
-            ))}
+            ].map(({ key, icon, label, badge }) => {
+              const locked = !registrationComplete;
+              return (
+                <div key={key} className={`nav-item${page === key ? ' active' : ''}${locked ? ' locked' : ''}`} onClick={() => nav(key)} title={locked ? 'Complete registration to unlock' : undefined}>
+                  <span className="nav-icon">{icon}</span> {label}
+                  {locked ? <span className="nav-badge">🔒</span> : (badge && <span className="nav-badge">{badge}</span>)}
+                </div>
+              );
+            })}
           </div>
         </aside>
 
@@ -289,9 +446,11 @@ export default function NPODashboard() {
               {bc[0]} / <strong>{bc[1]}</strong>
             </div>
             <div className="tb-actions">
-              <div className="icon-btn">🔍</div>
-              <div className="icon-btn">🔔<span className="ndot" /></div>
-              <div className="sb-org-avatar" style={{ cursor: 'pointer' }}>HP</div>
+              <div className="icon-btn" onClick={() => nav('proj-list')}>🔍</div>
+              <div className="icon-btn" onClick={() => nav('proj-reports')}>🔔<span className="ndot" /></div>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>{authUser.org_name || authUser.admin_name}</span>
+              <div className="sb-org-avatar" style={{ cursor: 'pointer' }} onClick={() => nav('npo-register')}>{(authUser.org_name || authUser.admin_name || 'NP').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase()}</div>
+              <div className="icon-btn" title="Sign out" onClick={handleSignOut}>🚪</div>
             </div>
           </header>
 
@@ -306,6 +465,9 @@ export default function NPODashboard() {
                 </div>
                 {submitted && <div className="success-banner">✅ Your NPO registration has been submitted. The Socia admin team will review and approve your account shortly.</div>}
                 {projectSubmitted && <div className="success-banner">✅ Your project has been submitted for admin review. Once approved it will be visible to influencers.</div>}
+                {!registrationComplete && lockedNotice && (
+                  <div className="alert-banner">🔒 Complete your NPO Account, Basic Info, Certification, and Bank Account details before you can access Campaign Projects.</div>
+                )}
 
                 <div className="stepper">
                   {NPO_STEPS.map((s, i) => (
@@ -396,35 +558,14 @@ export default function NPODashboard() {
                           onChange={e => setOrgForm(f => ({ ...f, [key]: e.target.value }))} />
                       </div>
                     ))}
-                    <div className="fg">
+                    <div className="fg" style={{ marginBottom:0 }}>
                       <label className="fl">Country *</label>
                       <select className="fs" value={orgForm.country} onChange={e => setOrgForm(f => ({ ...f, country: e.target.value }))}>
-                        {['United States','United Kingdom','Canada','Germany','Australia'].map(c => <option key={c}>{c}</option>)}
+                        {['Japan','United States','United Kingdom','Canada','Germany','Australia'].map(c => <option key={c}>{c}</option>)}
                       </select>
-                    </div>
-                    <div className="fg" style={{ marginBottom:0 }}>
-                      <label className="fl">Password *</label>
-                      <input className="fi" type="password" value={orgForm.password} placeholder="Create a password"
-                        onChange={e => setOrgForm(f => ({ ...f, password: e.target.value }))} />
                     </div>
                   </div>
                   <div>
-                    <div className="card" style={{ marginBottom:16 }}>
-                      <div className="card-title">Account Verification</div>
-                      <div className="card-sub">Required steps before proceeding</div>
-                      <div className="vs active">
-                        <div className="vs-num">1</div>
-                        <div><div style={{ fontWeight:700, fontSize:13 }}>Email Verification</div><div style={{ fontSize:12, color:'var(--teal)' }}>Verify your email address</div></div>
-                      </div>
-                      <div className="vs">
-                        <div className="vs-num">2</div>
-                        <div><div style={{ fontWeight:700, fontSize:13 }}>Phone Verification</div><div style={{ fontSize:12, color:'var(--slate)' }}>Verify with OTP</div></div>
-                      </div>
-                      <div className="vs">
-                        <div className="vs-num">3</div>
-                        <div><div style={{ fontWeight:700, fontSize:13 }}>Initial Agreement</div><div style={{ fontSize:12, color:'var(--slate)' }}>Review and sign the NPO platform agreement</div></div>
-                      </div>
-                    </div>
                     <div className="card">
                       <div className="card-title">Organization Type</div>
                       <div className="card-sub">Select all applicable categories</div>
@@ -469,7 +610,6 @@ export default function NPODashboard() {
                     {[
                       { label:'Legal Organization Name *', key:'legalName', placeholder:'HopeForward Foundation Inc.' },
                       { label:'Display / Brand Name', key:'displayName', placeholder:'HopeForward Foundation' },
-                      { label:'EIN / Tax ID Number *', key:'ein', placeholder:'XX-XXXXXXX' },
                       { label:'Year Founded', key:'year', placeholder:'2011' },
                       { label:'Website URL', key:'website', placeholder:'https://www.yourorg.org' },
                       { label:'Official Email', key:'officialEmail', placeholder:'contact@yourorg.org' },
@@ -492,7 +632,7 @@ export default function NPODashboard() {
                       </div>
                       <div className="g2" style={{ gap:10 }}>
                         <div className="fg"><label className="fl">ZIP Code</label><input className="fi" placeholder="60601" /></div>
-                        <div className="fg"><label className="fl">Country</label><select className="fs"><option>United States</option></select></div>
+                        <div className="fg"><label className="fl">Country</label><select className="fs">{['Japan','United States','United Kingdom','Canada','Germany','Australia'].map(c => <option key={c}>{c}</option>)}</select></div>
                       </div>
                     </div>
                     <div className="card">
@@ -518,7 +658,7 @@ export default function NPODashboard() {
               <>
                 <div className="ph">
                   <div className="ph-title">Group Certification & Identity Verification</div>
-                  <div className="ph-sub">Submit your nonprofit registration documents and key personnel ID. Reviewed within 48 hours.</div>
+                  <div className="ph-sub">Submit key personnel identity details for verification. Reviewed within 48 hours.</div>
                 </div>
                 <div className="stepper">
                   {NPO_STEPS.map((s, i) => (
@@ -528,75 +668,19 @@ export default function NPODashboard() {
                     </div>
                   ))}
                 </div>
-                <div className="g2">
-                  <div>
-                    <div className="card" style={{ marginBottom:16 }}>
-                      <div className="card-title">Registration & Certification Documents</div>
-                      <div className="card-sub">Upload official government-issued documents proving nonprofit status</div>
-                      <div className="fg">
-                        <label className="fl">Document Type</label>
-                        <select className="fs">
-                          <option>IRS 501(c)(3) Determination Letter</option>
-                          <option>State Nonprofit Incorporation Certificate</option>
-                          <option>International Equivalent</option>
-                        </select>
-                      </div>
-                      <div className="upbox" style={{ marginBottom:10 }}>
-                        <div className="upbox-icon">📄</div>
-                        <div className="upbox-text"><strong>Click to upload</strong> your 501(c)(3) determination letter</div>
-                        <div style={{ fontSize:11, color:'var(--slate)', marginTop:3 }}>PDF, JPG, PNG — max 10 MB</div>
-                      </div>
-                      <div className="upbox" style={{ marginBottom:10 }}>
-                        <div className="upbox-icon">📋</div>
-                        <div className="upbox-text"><strong>Click to upload</strong> state incorporation certificate</div>
-                        <div style={{ fontSize:11, color:'var(--slate)', marginTop:3 }}>PDF — max 10 MB</div>
-                      </div>
-                      <div className="upbox">
-                        <div className="upbox-icon">➕</div>
-                        <div className="upbox-text"><strong>Click to upload</strong> additional supporting documents</div>
-                        <div style={{ fontSize:11, color:'var(--slate)', marginTop:3 }}>PDF, JPG, PNG — max 10 MB each</div>
-                      </div>
-                    </div>
-                    <div className="card">
-                      <div className="card-title">Key Personnel Identity Verification</div>
-                      <div className="card-sub">Government-issued ID for the account administrator</div>
-                      <div className="fg">
-                        <label className="fl">ID Type</label>
-                        <select className="fs"><option>Passport</option><option>Driver's License</option><option>State ID</option></select>
-                      </div>
-                      <div className="upbox">
-                        <div className="upbox-icon">🪪</div>
-                        <div className="upbox-text"><strong>Click to upload</strong> your photo ID with selfie</div>
-                        <div style={{ fontSize:11, color:'var(--slate)', marginTop:3 }}>JPG, PNG — max 5MB</div>
-                      </div>
-                    </div>
+                <div className="card" style={{ maxWidth: 460 }}>
+                  <div className="card-title">Key Personnel Identity Verification</div>
+                  <div className="card-sub">Government-issued ID for the account administrator</div>
+                  <div className="fg">
+                    <label className="fl">ID Type</label>
+                    <select className="fs" value={kycForm.idType} onChange={e => setKycForm(f => ({ ...f, idType: e.target.value }))}>
+                      {['My Number Card', 'Residence Card', 'Passport', "Driver's License", 'State ID'].map(t => <option key={t}>{t}</option>)}
+                    </select>
                   </div>
-                  <div>
-                    <div className="card" style={{ marginBottom:16 }}>
-                      <div className="card-title">Verification Status</div>
-                      <div className="card-sub">Current review progress</div>
-                      <div className="tl">
-                        {['Documents Submitted','Auto-Scan Complete','Compliance Review','Group Certification Approved'].map((t, i) => (
-                          <div key={t} className="tl-item">
-                            <div className="tl-dot" />
-                            <div className="tl-title">{t}</div>
-                            <div className="tl-meta">Pending</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="card">
-                      <div className="card-title">Compliance Checklist</div>
-                      <div className="card-sub">All items required for campaign publishing</div>
-                      <div style={{ fontSize:13, lineHeight:2 }}>
-                        ⬜ Valid 501(c)(3) on file<br/>
-                        ⬜ State incorporation verified<br/>
-                        ⬜ Admin identity confirmed<br/>
-                        ⬜ No sanctions / watchlist matches<br/>
-                        ⬜ Annual report on file<br/>
-                        ⬜ Bank account (Step 4 — pending)
-                      </div>
-                    </div>
+                  <div className="fg" style={{ marginBottom:0 }}>
+                    <label className="fl">ID Number</label>
+                    <input className="fi" value={kycForm.idNumber} placeholder="Enter ID number"
+                      onChange={e => setKycForm(f => ({ ...f, idNumber: e.target.value }))} />
                   </div>
                 </div>
                 <div className="mt20 flex jb ic gap12">
@@ -628,7 +712,8 @@ export default function NPODashboard() {
                     {[
                       { label:'Account Holder Name (Legal) *', key:'holder', placeholder:'Exactly as registered with bank' },
                       { label:'Account Number *', key:'account', placeholder:'Enter checking account number' },
-                      { label:'Routing Number *', key:'routing', placeholder:'9-digit ABA routing number' },
+                      { label:'Bank Name *', key:'bank', placeholder:'Enter your bank name' },
+                      { label:'Bank Branch Name *', key:'branch', placeholder:'Enter your bank branch name' },
                     ].map(({ label, key, placeholder }) => (
                       <div key={key} className="fg">
                         <label className="fl">{label}</label>
@@ -636,25 +721,11 @@ export default function NPODashboard() {
                           onChange={e => setBankForm(f => ({ ...f, [key]: e.target.value }))} />
                       </div>
                     ))}
-                    <div className="fg">
-                      <label className="fl">Bank Name *</label>
-                      <select className="fs" value={bankForm.bank} onChange={e => setBankForm(f => ({ ...f, bank: e.target.value }))}>
-                        {['Chase Bank','Bank of America','Wells Fargo','Citibank','US Bank'].map(b => <option key={b}>{b}</option>)}
-                      </select>
-                    </div>
-                    <div className="fg">
+                    <div className="fg" style={{ marginBottom:0 }}>
                       <label className="fl">Account Type</label>
                       <select className="fs" value={bankForm.type} onChange={e => setBankForm(f => ({ ...f, type: e.target.value }))}>
                         {['Checking','Savings'].map(t => <option key={t}>{t}</option>)}
                       </select>
-                    </div>
-                    <div className="fg" style={{ marginBottom:0 }}>
-                      <label className="fl">Upload Voided Check or Bank Letter *</label>
-                      <div className="upbox">
-                        <div className="upbox-icon">🏦</div>
-                        <div className="upbox-text"><strong>Click to upload</strong> voided check or bank verification letter</div>
-                        <div style={{ fontSize:11, color:'var(--slate)', marginTop:3 }}>PDF or JPG — max 5 MB</div>
-                      </div>
                     </div>
                   </div>
                   <div>
@@ -682,6 +753,7 @@ export default function NPODashboard() {
                     </div>
                   </div>
                 </div>
+                {regError && <div className="auth-error mt16">{regError}</div>}
                 <div className="mt20 flex jb ic gap12">
                   <button className="btn btn-outline" onClick={() => nav('npo-certify')}>← Back</button>
                   <button className="btn btn-teal" onClick={handleSubmitNPO} disabled={submitting}>
@@ -704,46 +776,62 @@ export default function NPODashboard() {
 
                 {projectSubmitted && <div className="success-banner">✅ Project submitted for admin review. You'll be notified once it's approved and visible to influencers.</div>}
 
-                <div className="g4" style={{ marginBottom:20 }}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:14, marginBottom:20 }}>
                   {[
-                    { icon:'📋', bg:'var(--teal-light)', val:'4', lbl:'Total Projects', delta:'2 active', dt:'up' },
-                    { icon:'💵', bg:'#EEF2FF', val:'$184K', lbl:'Total Raised', delta:'↑ 28% this month', dt:'up' },
-                    { icon:'🤳', bg:'#F0FDF4', val:'23', lbl:'Active Creators', delta:'Promoting causes', dt:'up' },
-                    { icon:'👁', bg:'var(--amber-light)', val:'1.8M', lbl:'Total Impressions', delta:'Across all campaigns', dt:'up' },
+                    { icon:'📋', bg:'var(--teal-light)', val:String(myProjects.length), lbl:'Total Projects', delta:`${myProjects.filter(p => ['open','invited','approved'].includes(p.status)).length} active` },
+                    { icon:'💵', bg:'#EEF2FF', val:`$${myProjects.reduce((s, p) => s + Number(p.raised_amount || 0), 0).toLocaleString()}`, lbl:'Total Raised', delta:'Across all campaigns' },
+                    { icon:'🤳', bg:'#F0FDF4', val:String(myProjects.reduce((s, p) => s + Number(p.creator_count || 0), 0)), lbl:'Active Creators', delta:'Promoting causes' },
+                    { icon:'🔗', bg:'#EDE9FE', val:String(myProjects.reduce((s, p) => s + Number(p.total_clicks || 0), 0)), lbl:'Referral Link Clicks', delta:'Across all creators' },
+                    { icon:'⏳', bg:'var(--amber-light)', val:String(myProjects.filter(p => p.status === 'pending').length), lbl:'Pending Admin Review', delta:'Awaiting approval' },
                   ].map(s => (
                     <div key={s.lbl} className="stat-card">
                       <div className="stat-icon" style={{ background: s.bg }}>{s.icon}</div>
                       <div>
                         <div className="stat-val">{s.val}</div>
                         <div className="stat-lbl">{s.lbl}</div>
-                        <div className={`stat-delta ${s.dt}`}>{s.delta}</div>
+                        <div className="stat-delta up">{s.delta}</div>
                       </div>
                     </div>
                   ))}
                 </div>
 
+                {projectsLoading && <div style={{ color:'var(--slate)', fontSize:13, padding:'20px 0' }}>Loading your projects…</div>}
+                {!projectsLoading && myProjects.length === 0 && (
+                  <div className="card" style={{ textAlign:'center', padding:'40px 0', color:'var(--slate)', fontSize:14 }}>
+                    You haven't created any projects yet. <button className="btn btn-teal btn-sm" style={{ marginLeft:10 }} onClick={() => nav('proj-new')}>Create Your First Project →</button>
+                  </div>
+                )}
                 <div className="g2">
-                  {SAMPLE_PROJECTS.map((p, i) => (
-                    <div key={i} className="proj-card" onClick={() => nav('proj-new')}>
-                      <div className="proj-img" style={{ background: p.color }}>{p.emoji}</div>
-                      <div className="proj-body">
-                        <div className="flex jb ic">
-                          <div className="proj-name">{p.name}</div>
-                          <span className={`badge ${p.statusClass}`}>{p.status}</span>
+                  {myProjects.map((p, i) => {
+                    const meta = STATUS_META[p.status] || { label: p.status, cls: 'b-gray' };
+                    const goalAmt = Number(p.goal_amount || 0);
+                    const raisedAmt = Number(p.raised_amount || 0);
+                    return (
+                      <div key={p.id} className="proj-card" onClick={() => nav('proj-list')}>
+                        <div className="proj-img" style={{ background: PROJ_GRADIENTS[i % PROJ_GRADIENTS.length] }}>{p.emoji || '🌍'}</div>
+                        <div className="proj-body">
+                          <div className="flex jb ic">
+                            <div className="proj-name">{p.title}</div>
+                            <span className={`badge ${meta.cls}`}>{meta.label}</span>
+                          </div>
+                          <div className="proj-org">{p.category} · {p.organization}</div>
+                          {p.status === 'rejected' && p.reject_reason && (
+                            <div style={{ fontSize:11.5, color:'var(--rose)', marginBottom:8 }}>Reason: {p.reject_reason}</div>
+                          )}
+                          <div className="fund-meter">
+                            <div className="fund-label"><span className="raised">${raisedAmt.toLocaleString()}</span><span className="goal">of {goalAmt ? `$${goalAmt.toLocaleString()}` : (p.goal || '—')} goal</span></div>
+                            <div className="prog-wrap"><div className="prog-bar" style={{ width: `${goalAmt ? Math.min(Math.round(raisedAmt / goalAmt * 100), 100) : 0}%`, background: 'var(--teal-mid)' }} /></div>
+                          </div>
+                          <div className="proj-footer">
+                            <div><div style={{ fontSize:11, color:'var(--slate)' }}>Creators</div><div style={{ fontWeight:700, fontSize:13 }}>{p.creator_count || 0} promoting</div></div>
+                            <div><div style={{ fontSize:11, color:'var(--slate)' }}>Link Clicks</div><div style={{ fontWeight:700, fontSize:13 }}>🔗 {p.total_clicks || 0}</div></div>
+                            <div><div style={{ fontSize:11, color:'var(--slate)' }}>Deadline</div><div style={{ fontWeight:700, fontSize:13 }}>{p.deadline ? new Date(p.deadline).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—'}</div></div>
+                          </div>
+                          {p.category && <div style={{ marginTop:8 }}><span className="tag">{p.category}</span></div>}
                         </div>
-                        <div className="proj-org">{p.tags[0]} · HopeForward Foundation</div>
-                        <div className="fund-meter">
-                          <div className="fund-label"><span className="raised">${p.raised.toLocaleString()}</span><span className="goal">of ${p.goal.toLocaleString()} goal</span></div>
-                          <div className="prog-wrap"><div className="prog-bar" style={{ width: `${Math.round(p.raised/p.goal*100)}%`, background: 'var(--teal-mid)' }} /></div>
-                        </div>
-                        <div className="proj-footer">
-                          <div><div style={{ fontSize:11, color:'var(--slate)' }}>Creators</div><div style={{ fontWeight:700, fontSize:13 }}>{p.creators} promoting</div></div>
-                          <div><div style={{ fontSize:11, color:'var(--slate)' }}>Deadline</div><div style={{ fontWeight:700, fontSize:13 }}>{p.deadline}</div></div>
-                        </div>
-                        <div style={{ marginTop:8 }}>{p.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </>
             )}

@@ -6,7 +6,10 @@ const api = axios.create({ baseURL: BASE });
 
 // ── Influencer ──────────────────────────────────────────────
 export const registerInfluencer = (data) => api.post('/api/influencers', data);
+export const signInInfluencer = (data) => api.post('/api/auth/signin', data);
+export const signUpInfluencer = (data) => api.post('/api/auth/signup', data);
 export const getInfluencer = (id) => api.get(`/api/influencers/${id}`);
+export const updateInfluencer = (id, data) => api.put(`/api/influencers/${id}`, data);
 export const getInfluencerStats = (id) => api.get(`/api/users/${id}/stats`);
 export const getInfluencerProjects = (id) => api.get(`/api/users/${id}/projects/active`);
 export const getProjectSearch = () => api.get('/api/projects/approved');
@@ -17,9 +20,13 @@ export const getProjectInfluencers = (id) => api.get(`/api/projects/${id}/influe
 export const submitPostUrl = (data) => api.post('/api/submissions', data);
 export const getSubmissions = (id) => api.get(`/api/users/${id}/submissions`);
 export const getEarnings = (id) => api.get(`/api/earnings/${id}`);
+export const resolveGoLink = (slug) => api.get(`/api/go/${slug}`);
 
 // ── NPO ─────────────────────────────────────────────────────
+export const signInNPO = (data) => api.post('/api/auth/npo/signin', data);
+export const signUpNPO = (data) => api.post('/api/auth/npo/signup', data);
 export const registerNPO = (data) => api.post('/api/npos', data);
+export const updateNPO = (id, data) => api.put(`/api/npos/${id}`, data);
 export const getNPO = (id) => api.get(`/api/npos/${id}`);
 export const getNPOProjects = (npoId) => api.get(`/api/npos/${npoId}/projects`);
 export const createProject = (data) => api.post('/api/projects', data);
@@ -27,6 +34,9 @@ export const updateProject = (id, data) => api.put(`/api/projects/${id}`, data);
 export const submitProject = (id) => api.post(`/api/projects/${id}/submit`);
 
 // ── Admin ────────────────────────────────────────────────────
+export const signInAdmin = (data) => api.post('/api/auth/admin/signin', data);
+export const signUpAdmin = (data) => api.post('/api/auth/admin/signup', data);
+export const listAdmins = () => api.get('/api/admin/admins');
 export const getAdminStats = () => api.get('/api/admin/stats');
 export const listNPOs = (status) => api.get('/api/admin/npos', { params: { status } });
 export const approveNPO = (id) => api.post(`/api/admin/npos/${id}/approve`);
