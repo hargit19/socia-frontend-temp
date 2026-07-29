@@ -20,7 +20,10 @@ export const getProjectInfluencers = (id) => api.get(`/api/projects/${id}/influe
 export const submitPostUrl = (data) => api.post('/api/submissions', data);
 export const getSubmissions = (id) => api.get(`/api/users/${id}/submissions`);
 export const getEarnings = (id) => api.get(`/api/earnings/${id}`);
+export const getInfluencerEarnings = (id) => api.get(`/api/influencers/${id}/earnings`);
 export const resolveGoLink = (slug) => api.get(`/api/go/${slug}`);
+export const getOffers = (params) => api.get('/api/offers', { params });
+export const respondToOffer = (offerId, status) => api.put(`/api/offers/${offerId}`, { status });
 
 // ── NPO ─────────────────────────────────────────────────────
 export const signInNPO = (data) => api.post('/api/auth/npo/signin', data);
@@ -32,6 +35,10 @@ export const getNPOProjects = (npoId) => api.get(`/api/npos/${npoId}/projects`);
 export const createProject = (data) => api.post('/api/projects', data);
 export const updateProject = (id, data) => api.put(`/api/projects/${id}`, data);
 export const submitProject = (id) => api.post(`/api/projects/${id}/submit`);
+export const browseInfluencers = (search) => api.get('/api/influencers', { params: { status: 'approved', search } });
+export const inviteInfluencer = (projectId, influencerId) =>
+  api.post('/api/offers', { project_id: projectId, influencer_id: influencerId });
+export const getProjectOffers = (projectId) => api.get('/api/offers', { params: { project_id: projectId } });
 
 // ── Admin ────────────────────────────────────────────────────
 export const signInAdmin = (data) => api.post('/api/auth/admin/signin', data);
@@ -49,5 +56,7 @@ export const approveInfluencer = (id) => api.post(`/api/admin/influencers/${id}/
 export const rejectInfluencer = (id, reason) => api.post(`/api/admin/influencers/${id}/reject`, { reason });
 export const getPendingReviews = () => api.get('/api/admin/pending');
 export const getLiveActivity = () => api.get('/api/admin/activity');
+export const getAdminSettings = () => api.get('/api/admin/settings');
+export const updateAdminSettings = (data) => api.put('/api/admin/settings', data);
 
 export default api;

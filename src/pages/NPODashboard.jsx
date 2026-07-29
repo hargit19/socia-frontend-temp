@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { registerNPO, updateNPO, createProject, submitProject, signInNPO, signUpNPO, getNPOProjects } from '../api/api';
+import { registerNPO, updateNPO, createProject, submitProject, signInNPO, signUpNPO, getNPOProjects, getProjectInfluencers, browseInfluencers, inviteInfluencer, getProjectOffers } from '../api/api';
+import { yen } from '../components/ui';
 
 const S = `
 :root{
@@ -218,8 +219,8 @@ export default function NPODashboard() {
   const [orgForm, setOrgForm] = useState({ fullName:'', title:'', email:'', phone:'', country:'Japan' });
   const [basicForm, setBasicForm] = useState({ legalName:'', displayName:'', year:'', website:'', officialEmail:'' });
   const [kycForm, setKycForm] = useState({ idType:'Passport', idNumber:'' });
-  const [bankForm, setBankForm] = useState({ holder:'', bank:'', branch:'', account:'', type:'Checking' });
-  const [projForm, setProjForm] = useState({ name:'', category:'♻️ Environment & Clean Water', platform:'Kickstarter', url:'', description:'', goal:'', startDate:'', endDate:'', impactStatement:'' });
+  const [bankForm, setBankForm] = useState({ holder:'', bank:'', branch:'', account:'' });
+  const [projForm, setProjForm] = useState({ name:'', category:'♻️ Environment & Clean Water', platform:'Kickstarter', description:'', goal:'', stipendAmount:'', startDate:'', endDate:'', impactStatement:'' });
   const [regError, setRegError] = useState('');
   const [lockedNotice, setLockedNotice] = useState(false);
 
@@ -248,6 +249,51 @@ export default function NPODashboard() {
   };
 
   useEffect(() => { fetchMyProjects(npoId); }, [npoId]);
+
+  // Project detail / invite creators
+  const [viewProject, setViewProject] = useState(null);
+  const [enrolledCreators, setEnrolledCreators] = useState([]);
+  const [browseList, setBrowseList] = useState([]);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [inviteSearch, setInviteSearch] = useState('');
+  const [projectOfferMap, setProjectOfferMap] = useState({});
+  const [invitingId, setInvitingId] = useState(null);
+
+  const openProjectDetail = (p) => {
+    setViewProject(p);
+    setPage('proj-detail');
+    getProjectInfluencers(p.id).then(r => setEnrolledCreators(r.data || [])).catch(() => setEnrolledCreators([]));
+    getProjectOffers(p.id).then(r => {
+      const map = {};
+      (r.data || []).forEach(o => { map[o.influencer_id] = o.status; });
+      setProjectOfferMap(map);
+    }).catch(() => setProjectOfferMap({}));
+  };
+
+  useEffect(() => {
+    if (page !== 'proj-detail' || !viewProject) return;
+    setBrowseLoading(true);
+    const t = setTimeout(() => {
+      browseInfluencers(inviteSearch)
+        .then(r => setBrowseList(r.data || []))
+        .catch(() => setBrowseList([]))
+        .finally(() => setBrowseLoading(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [page, viewProject, inviteSearch]);
+
+  const sendInvite = async (influencerId) => {
+    if (!viewProject) return;
+    setInvitingId(influencerId);
+    try {
+      await inviteInfluencer(viewProject.id, influencerId);
+      setProjectOfferMap(m => ({ ...m, [influencerId]: 'pending' }));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setInvitingId(null);
+    }
+  };
 
   const registrationComplete = isRegistrationComplete(authUser);
 
@@ -375,6 +421,7 @@ export default function NPODashboard() {
     'npo-certify': ['Organization Setup', 'Certification & KYC'],
     'npo-recipient': ['Organization Setup', 'Recipient Bank Info'],
     'proj-list': ['Campaign Projects', 'My Projects'],
+    'proj-detail': ['Campaign Projects', viewProject?.title || 'Project Detail'],
     'proj-new': ['Campaign Projects', 'Create New Project'],
     'proj-targets': ['Campaign Projects', 'Targets & Timelines'],
     'proj-materials': ['Campaign Projects', 'Promotional Materials'],
@@ -422,11 +469,11 @@ export default function NPODashboard() {
           <div className="sb-section">
             <div className="sb-section-label">Campaign Projects</div>
             {[
-              { key: 'proj-list', icon: '📋', label: 'My Projects', badge: '4' },
+              { key: 'proj-list', icon: '📋', label: 'My Projects', badge: myProjects.length || null },
               { key: 'proj-new', icon: '➕', label: 'Create New Project' },
               { key: 'proj-targets', icon: '🎯', label: 'Targets & Timelines' },
               { key: 'proj-materials', icon: '🖼️', label: 'Promotional Materials' },
-              { key: 'proj-reports', icon: '📊', label: 'Activity Reports', badge: '2' },
+              { key: 'proj-reports', icon: '📊', label: 'Activity Reports', badge: null },
             ].map(({ key, icon, label, badge }) => {
               const locked = !registrationComplete;
               return (
@@ -705,53 +752,21 @@ export default function NPODashboard() {
                     </div>
                   ))}
                 </div>
-                <div className="g2">
-                  <div className="card">
-                    <div className="card-title">Recipient Account Details</div>
-                    <div className="card-sub">This account will receive all donation disbursements</div>
-                    {[
-                      { label:'Account Holder Name (Legal) *', key:'holder', placeholder:'Exactly as registered with bank' },
-                      { label:'Account Number *', key:'account', placeholder:'Enter checking account number' },
-                      { label:'Bank Name *', key:'bank', placeholder:'Enter your bank name' },
-                      { label:'Bank Branch Name *', key:'branch', placeholder:'Enter your bank branch name' },
-                    ].map(({ label, key, placeholder }) => (
-                      <div key={key} className="fg">
-                        <label className="fl">{label}</label>
-                        <input className="fi" value={bankForm[key]} placeholder={placeholder}
-                          onChange={e => setBankForm(f => ({ ...f, [key]: e.target.value }))} />
-                      </div>
-                    ))}
-                    <div className="fg" style={{ marginBottom:0 }}>
-                      <label className="fl">Account Type</label>
-                      <select className="fs" value={bankForm.type} onChange={e => setBankForm(f => ({ ...f, type: e.target.value }))}>
-                        {['Checking','Savings'].map(t => <option key={t}>{t}</option>)}
-                      </select>
+                <div className="card" style={{ maxWidth: 460 }}>
+                  <div className="card-title">Recipient Account Details</div>
+                  <div className="card-sub">This account will receive all donation disbursements</div>
+                  {[
+                    { label:'Account Holder Name (Legal) *', key:'holder', placeholder:'Exactly as registered with bank' },
+                    { label:'Account Number *', key:'account', placeholder:'Enter checking account number' },
+                    { label:'Bank Name *', key:'bank', placeholder:'Enter your bank name' },
+                    { label:'Bank Branch Name *', key:'branch', placeholder:'Enter your bank branch name' },
+                  ].map(({ label, key, placeholder }) => (
+                    <div key={key} className="fg">
+                      <label className="fl">{label}</label>
+                      <input className="fi" value={bankForm[key]} placeholder={placeholder}
+                        onChange={e => setBankForm(f => ({ ...f, [key]: e.target.value }))} />
                     </div>
-                  </div>
-                  <div>
-                    <div className="card" style={{ marginBottom:16 }}>
-                      <div className="card-title">Disbursement Schedule</div>
-                      <div className="card-sub">How funds will be transferred to your account</div>
-                      <div className="fg">
-                        <label className="fl">Disbursement Frequency</label>
-                        <select className="fs">
-                          <option>Monthly (Recommended)</option>
-                          <option>Bi-weekly</option>
-                          <option>Weekly</option>
-                          <option>On campaign close</option>
-                        </select>
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Minimum Disbursement Threshold</label>
-                        <select className="fs">
-                          <option>$100</option><option>$250</option><option>$500</option><option>No minimum</option>
-                        </select>
-                      </div>
-                      <div className="info-box info-amber">
-                        ⚠️ A <strong>$0.01 test deposit</strong> will be sent to verify your account. Socia deducts a <strong>3.5% platform fee</strong> before disbursement.
-                      </div>
-                    </div>
-                  </div>
+                  ))}
                 </div>
                 {regError && <div className="auth-error mt16">{regError}</div>}
                 <div className="mt20 flex jb ic gap12">
@@ -779,7 +794,7 @@ export default function NPODashboard() {
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:14, marginBottom:20 }}>
                   {[
                     { icon:'📋', bg:'var(--teal-light)', val:String(myProjects.length), lbl:'Total Projects', delta:`${myProjects.filter(p => ['open','invited','approved'].includes(p.status)).length} active` },
-                    { icon:'💵', bg:'#EEF2FF', val:`$${myProjects.reduce((s, p) => s + Number(p.raised_amount || 0), 0).toLocaleString()}`, lbl:'Total Raised', delta:'Across all campaigns' },
+                    { icon:'💵', bg:'#EEF2FF', val:yen(myProjects.reduce((s, p) => s + Number(p.raised_amount || 0), 0)), lbl:'Total Raised', delta:'Across all campaigns' },
                     { icon:'🤳', bg:'#F0FDF4', val:String(myProjects.reduce((s, p) => s + Number(p.creator_count || 0), 0)), lbl:'Active Creators', delta:'Promoting causes' },
                     { icon:'🔗', bg:'#EDE9FE', val:String(myProjects.reduce((s, p) => s + Number(p.total_clicks || 0), 0)), lbl:'Referral Link Clicks', delta:'Across all creators' },
                     { icon:'⏳', bg:'var(--amber-light)', val:String(myProjects.filter(p => p.status === 'pending').length), lbl:'Pending Admin Review', delta:'Awaiting approval' },
@@ -807,7 +822,7 @@ export default function NPODashboard() {
                     const goalAmt = Number(p.goal_amount || 0);
                     const raisedAmt = Number(p.raised_amount || 0);
                     return (
-                      <div key={p.id} className="proj-card" onClick={() => nav('proj-list')}>
+                      <div key={p.id} className="proj-card" onClick={() => openProjectDetail(p)}>
                         <div className="proj-img" style={{ background: PROJ_GRADIENTS[i % PROJ_GRADIENTS.length] }}>{p.emoji || '🌍'}</div>
                         <div className="proj-body">
                           <div className="flex jb ic">
@@ -819,7 +834,7 @@ export default function NPODashboard() {
                             <div style={{ fontSize:11.5, color:'var(--rose)', marginBottom:8 }}>Reason: {p.reject_reason}</div>
                           )}
                           <div className="fund-meter">
-                            <div className="fund-label"><span className="raised">${raisedAmt.toLocaleString()}</span><span className="goal">of {goalAmt ? `$${goalAmt.toLocaleString()}` : (p.goal || '—')} goal</span></div>
+                            <div className="fund-label"><span className="raised">{yen(raisedAmt)}</span><span className="goal">of {goalAmt ? yen(goalAmt) : (p.goal || '—')} goal</span></div>
                             <div className="prog-wrap"><div className="prog-bar" style={{ width: `${goalAmt ? Math.min(Math.round(raisedAmt / goalAmt * 100), 100) : 0}%`, background: 'var(--teal-mid)' }} /></div>
                           </div>
                           <div className="proj-footer">
@@ -829,6 +844,79 @@ export default function NPODashboard() {
                           </div>
                           {p.category && <div style={{ marginTop:8 }}><span className="tag">{p.category}</span></div>}
                         </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {/* ── PROJECT DETAIL / INVITE CREATORS ── */}
+            {page === 'proj-detail' && viewProject && (
+              <>
+                <div className="ph flex jb ic">
+                  <div>
+                    <div className="ph-title">{viewProject.title}</div>
+                    <div className="ph-sub">{viewProject.category} · {viewProject.organization}</div>
+                  </div>
+                  <button className="btn btn-outline" onClick={() => nav('proj-list')}>← Back to My Projects</button>
+                </div>
+
+                <div className="g2" style={{ marginBottom:16 }}>
+                  <div className="card">
+                    <div className="card-title">Campaign Overview</div>
+                    <div style={{ fontSize:13, lineHeight:2 }}>
+                      <div><strong>Platform:</strong> {viewProject.platform}</div>
+                      <div><strong>Goal:</strong> {viewProject.goal_amount ? yen(viewProject.goal_amount) : (viewProject.goal || '—')}</div>
+                      {Number(viewProject.goal_amount) > 0 && Number(viewProject.stipend_amount) > 0 && (
+                        <div><strong>Creator Payout:</strong> Raise {yen(viewProject.goal_amount)} → Paid {yen(viewProject.stipend_amount)}</div>
+                      )}
+                      {viewProject.deadline && <div><strong>Deadline:</strong> {new Date(viewProject.deadline).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>}
+                    </div>
+                  </div>
+                  <div className="card">
+                    <div className="card-title">Enrolled Creators</div>
+                    <div className="card-sub">Creators currently promoting this campaign</div>
+                    {enrolledCreators.length === 0 ? (
+                      <div style={{ textAlign:'center', color:'var(--slate)', fontSize:13, padding:'20px 0' }}>No creators enrolled yet.</div>
+                    ) : enrolledCreators.map(c => (
+                      <div key={c.id} style={{ display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid var(--border)', fontSize:13 }}>
+                        <span>{c.full_name}</span>
+                        <span className="badge b-teal">{c.enrollment_status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="card-title">Invite Creators</div>
+                  <div className="card-sub">Browse approved creators and invite them directly to this campaign</div>
+                  <input className="fi" style={{ maxWidth:360, marginBottom:14 }} placeholder="🔍 Search creators by name..."
+                    value={inviteSearch} onChange={e => setInviteSearch(e.target.value)} />
+                  {browseLoading && <div style={{ color:'var(--slate)', fontSize:13, padding:'10px 0' }}>Loading creators…</div>}
+                  {!browseLoading && browseList.length === 0 && (
+                    <div style={{ textAlign:'center', color:'var(--slate)', fontSize:13, padding:'20px 0' }}>No approved creators found.</div>
+                  )}
+                  {browseList.map(inf => {
+                    const alreadyEnrolled = enrolledCreators.some(c => c.id === inf.id);
+                    const offerStatus = projectOfferMap[inf.id];
+                    return (
+                      <div key={inf.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, padding:'10px 0', borderBottom:'1px solid var(--border)' }}>
+                        <div>
+                          <div style={{ fontWeight:700, fontSize:13.5 }}>{inf.full_name}</div>
+                          <div style={{ fontSize:12, color:'var(--slate)' }}>{inf.country || '—'}{inf.bio ? ` · ${inf.bio}` : ''}</div>
+                        </div>
+                        {alreadyEnrolled ? (
+                          <span className="badge b-teal">✓ Enrolled</span>
+                        ) : offerStatus === 'pending' ? (
+                          <span className="badge b-amber">Invited</span>
+                        ) : offerStatus === 'declined' ? (
+                          <span className="badge b-gray">Declined</span>
+                        ) : (
+                          <button className="btn btn-teal btn-sm" disabled={invitingId === inf.id} onClick={() => sendInvite(inf.id)}>
+                            {invitingId === inf.id ? '…' : '+ Invite'}
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -866,11 +954,6 @@ export default function NPODashboard() {
                           {['Kickstarter','GoFundMe','Indiegogo','Fundly','Other'].map(p => <option key={p}>{p}</option>)}
                         </select>
                       </div>
-                      <div className="fg">
-                        <label className="fl">External Campaign URL</label>
-                        <input className="fi" value={projForm.url} placeholder="https://kickstarter.com/projects/..."
-                          onChange={e => setProjForm(f => ({ ...f, url: e.target.value }))} />
-                      </div>
                       <div className="fg" style={{ marginBottom:0 }}>
                         <label className="fl">Project Visibility</label>
                         <div className="flex ic gap10" style={{ marginTop:6 }}>
@@ -901,7 +984,7 @@ export default function NPODashboard() {
                       <div className="card-title">Fundraising Target *</div>
                       <div className="card-sub">Set your goal amount and campaign window</div>
                       <div className="fg">
-                        <label className="fl">Goal Amount (USD) *</label>
+                        <label className="fl">Goal Amount (¥) *</label>
                         <input className="fi" value={projForm.goal} placeholder="60,000"
                           onChange={e => setProjForm(f => ({ ...f, goal: e.target.value }))} />
                       </div>
@@ -914,6 +997,15 @@ export default function NPODashboard() {
                         <label className="fl">Campaign End Date *</label>
                         <input className="fi" type="date" value={projForm.endDate}
                           onChange={e => setProjForm(f => ({ ...f, endDate: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="card" style={{ marginBottom:16 }}>
+                      <div className="card-title">Creator Payout</div>
+                      <div className="card-sub">Fixed amount paid to a creator once this project's raise goal is met</div>
+                      <div className="fg" style={{ marginBottom:0 }}>
+                        <label className="fl">Payout Amount (¥) *</label>
+                        <input className="fi" value={projForm.stipendAmount} placeholder="50,000"
+                          onChange={e => setProjForm(f => ({ ...f, stipendAmount: e.target.value }))} />
                       </div>
                     </div>
                     <div className="card">
@@ -948,7 +1040,7 @@ export default function NPODashboard() {
                     <div className="card-title">Creator Recruitment Targets</div>
                     <div className="card-sub">Set the number and type of creators needed</div>
                     <div className="g2" style={{ gap:10, marginBottom:16 }}>
-                      {[['Total Creators Needed','20'],['Min. Follower Count','10,000'],['Min. Engagement Rate','3.0%'],['Creator Stipend','$400']].map(([l, v]) => (
+                      {[['Total Creators Needed','20'],['Min. Follower Count','10,000'],['Min. Engagement Rate','3.0%'],['Creator Stipend','¥40,000']].map(([l, v]) => (
                         <div key={l} className="fg"><label className="fl">{l}</label><input className="fi" defaultValue={v} /></div>
                       ))}
                     </div>

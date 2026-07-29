@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { registerInfluencer, updateInfluencer, enrollProject, getProjectSearch, getInfluencerActiveProjects, signInInfluencer, signUpInfluencer } from '../api/api';
+import { registerInfluencer, updateInfluencer, enrollProject, getProjectSearch, getInfluencerActiveProjects, signInInfluencer, signUpInfluencer, getOffers, respondToOffer, getInfluencerEarnings } from '../api/api';
+import { yen } from '../components/ui';
 
 // ── Design tokens (same as influencer HTML) ──────────────────
 const S = `
@@ -160,7 +161,7 @@ tbody tr:last-child td{border-bottom:none;}
 
 const STEPS_REG = ['Profile', 'Link SNS', 'KYC', 'Payment'];
 const CAUSE_OPTS = ['🏫 Education','🍽️ Food Relief','🌍 Global Aid','🏥 Healthcare','♻️ Environment','🏘️ Housing','🤝 Refugees','👶 Children'];
-const GATED_PAGES = ['proj-active', 'proj-search', 'proj-apply', 'proj-accept', 'post-submit', 'post-review', 'analytics', 'earnings'];
+const GATED_PAGES = ['proj-active', 'proj-search', 'proj-apply', 'post-submit', 'post-review', 'analytics', 'earnings'];
 const isRegistrationComplete = (u) => Boolean(u && u.phone && u.id_number && u.bank_account);
 
 export default function InfluencerDashboard() {
@@ -171,7 +172,7 @@ export default function InfluencerDashboard() {
     causes: [],
     snsAccounts: [],
     idType: 'Residence Card', idNumber: '',
-    accountHolder: '', bankName: '', bankBranch: '', accountNumber: '', accountType: 'Checking',
+    accountHolder: '', bankName: '', bankBranch: '', accountNumber: '',
   });
   const [snsPlatform, setSnsPlatform] = useState('instagram');
   const [snsHandle, setSnsHandle] = useState('');
@@ -224,6 +225,52 @@ export default function InfluencerDashboard() {
       .catch(() => setProjects([]))
       .finally(() => setProjLoading(false));
   }, []);
+
+  // NPO invitations (offers)
+  const [offers, setOffers] = useState([]);
+  const [offersLoading, setOffersLoading] = useState(false);
+  const [offerActionId, setOfferActionId] = useState(null);
+  const [offerAcceptedSlug, setOfferAcceptedSlug] = useState('');
+
+  const fetchOffers = (id) => {
+    if (!id) return;
+    setOffersLoading(true);
+    getOffers({ influencer_id: id, status: 'pending' })
+      .then(r => setOffers(r.data || []))
+      .catch(() => setOffers([]))
+      .finally(() => setOffersLoading(false));
+  };
+
+  useEffect(() => { fetchOffers(influencerId); }, [influencerId]);
+
+  const respondOffer = async (offer, status) => {
+    setOfferActionId(offer.id);
+    try {
+      const res = await respondToOffer(offer.id, status);
+      if (status === 'accepted' && res.data?.referral_slug) {
+        setOfferAcceptedSlug(res.data.referral_slug);
+        fetchActiveProjects(influencerId);
+      }
+      setOffers(o => o.filter(x => x.id !== offer.id));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setOfferActionId(null);
+    }
+  };
+
+  // Earnings summary
+  const [earnings, setEarnings] = useState(null);
+  const [earningsLoading, setEarningsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!influencerId || page !== 'earnings') return;
+    setEarningsLoading(true);
+    getInfluencerEarnings(influencerId)
+      .then(r => setEarnings(r.data))
+      .catch(() => setEarnings(null))
+      .finally(() => setEarningsLoading(false));
+  }, [influencerId, page]);
 
   const registrationComplete = isRegistrationComplete(authUser);
 
@@ -294,6 +341,39 @@ export default function InfluencerDashboard() {
   const toggleCause = (c) => setFormData(f => ({
     ...f, causes: f.causes.includes(c) ? f.causes.filter(x => x !== c) : [...f.causes, c]
   }));
+
+  // Estimates how well-matched this creator is for a project, based on cause overlap and platform readiness.
+  const fitScore = (project) => {
+    const norm = s => String(s || '').toLowerCase().replace(/[^a-z& ]/g, ' ').trim();
+    const category = norm(project.category);
+    const causeMatch = formData.causes.some(c => {
+      const word = norm(c).split(' ').filter(Boolean)[0];
+      return word && category.includes(word);
+    });
+    let score = 45;
+    if (causeMatch) score += 35;
+    if (formData.snsAccounts.length > 0) score += 15;
+    let hash = 0;
+    const seed = String(project.id || project.title || '');
+    for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) % 97;
+    score += hash % 8;
+    return Math.max(35, Math.min(98, score));
+  };
+  const fitScoreColor = (score) => score >= 70 ? 'var(--green-mid)' : score >= 45 ? 'var(--orange-mid)' : 'var(--red)';
+
+  // new Date('YYYY-MM-DD') parses as UTC midnight, which can render as the previous day
+  // in timezones behind UTC once .toLocaleDateString() converts it back to local time.
+  const parseLocalDate = (s) => {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  };
+
+  const ordinal = (n) => {
+    if (n % 10 === 1 && n % 100 !== 11) return `${n}st`;
+    if (n % 10 === 2 && n % 100 !== 12) return `${n}nd`;
+    if (n % 10 === 3 && n % 100 !== 13) return `${n}rd`;
+    return `${n}th`;
+  };
 
   const handleSubmitRegistration = async () => {
     const missing = [];
@@ -386,8 +466,7 @@ export default function InfluencerDashboard() {
     'reg-tax': 'Registration / Tax & Payment',
     'proj-active': 'Projects / My Active Projects',
     'proj-search': 'Projects / Project Search',
-    'proj-apply': 'Projects / Apply',
-    'proj-accept': 'Projects / Accept / Decline',
+    'proj-apply': 'Projects / Apply & Invitations',
     'post-submit': 'Post & Creative / Submit Post URL',
     'post-review': 'Post & Creative / Submission Review',
     'analytics': 'Analytics',
@@ -434,10 +513,9 @@ export default function InfluencerDashboard() {
           <div className="sidebar-section">
             <div className="sidebar-section-label">Projects</div>
             {[
-              { key: 'proj-active', icon: '🗂️', label: 'My Active Projects', badge: '2' },
-              { key: 'proj-search', icon: '🔍', label: 'Project Search', badge: '12' },
-              { key: 'proj-apply', icon: '📤', label: 'Apply / Participate' },
-              { key: 'proj-accept', icon: '✅', label: 'Accept / Decline', badge: '3' },
+              { key: 'proj-active', icon: '🗂️', label: 'My Active Projects', badge: activeProjects.length || null },
+              { key: 'proj-search', icon: '🔍', label: 'Project Search', badge: projects.length || null },
+              { key: 'proj-apply', icon: '📤', label: 'Apply / Invitations', badge: offers.length || null },
             ].map(({ key, icon, label, badge }) => {
               const locked = !registrationComplete;
               return (
@@ -782,26 +860,13 @@ export default function InfluencerDashboard() {
                           onChange={e => setFormData(f => ({ ...f, [key]: e.target.value }))} />
                       </div>
                     ))}
-                    <div className="form-group">
-                      <label className="form-label">Account Type</label>
-                      <select className="form-select" value={formData.accountType} onChange={e => setFormData(f => ({ ...f, accountType: e.target.value }))}>
-                        {['Checking','Savings'].map(t => <option key={t}>{t}</option>)}
-                      </select>
-                    </div>
-                    <div style={{ background: 'var(--orange-light)', border: '1px solid var(--orange-mid)', borderRadius: 10, padding: 12, fontSize: 12.5, color: 'var(--orange)' }}>
-                      ⚠️ A $0.01 test deposit will verify your account. Socia deducts a <strong>3.5% platform fee</strong> before all disbursements.
-                    </div>
                   </div>
                   <div>
                     <div className="card" style={{ marginBottom: 16 }}>
                       <div className="card-title">Payout Summary</div>
                       <div className="card-sub">How stipends are calculated and paid</div>
-                      <div style={{ background: 'var(--bg)', borderRadius: 10, padding: 14, fontSize: 13 }}>
-                        {[['Base Stipend per Campaign','$200–$800'],['Goal-Met Bonus','Up to +$150'],['Platform Fee (Socia)','–3.5%'],['Net Payout','Within 7 days']].map(([k, v]) => (
-                          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-                            <span>{k}</span><span style={{ fontWeight: 700 }}>{v}</span>
-                          </div>
-                        ))}
+                      <div style={{ background: 'var(--bg)', borderRadius: 10, padding: 14, fontSize: 13, lineHeight: 1.7 }}>
+                        A fixed amount will be provided on raising a pre-decided amount for the project (raise amount X → get amount Y). The amount will be paid on a fixed date of the month following project completion. The date will be decided by the Socia team.
                       </div>
                     </div>
                   </div>
@@ -835,21 +900,34 @@ export default function InfluencerDashboard() {
                 <div className="grid-2" style={{ marginBottom: 20 }}>
                   {projects.map((p, i) => {
                     const alreadyEnrolled = activeProjects.some(a => a.id === p.id);
+                    const score = fitScore(p);
+                    const isClosed = p.deadline ? new Date(p.deadline) < new Date() : false;
                     return (
-                      <div key={p.id} className="proj-card" onClick={() => openApply(p)}>
+                      <div key={p.id} className="proj-card" onClick={() => !isClosed && openApply(p)} style={isClosed ? { opacity: 0.55, cursor: 'not-allowed' } : undefined}>
                         <div className="proj-card-img" style={{ background: GRADIENTS[i % GRADIENTS.length] }}>{p.emoji || '🌍'}</div>
                         <div className="proj-card-body">
                           <div className="proj-card-title">{p.title}</div>
                           <div className="proj-card-brand">{p.organization} · {p.platform}</div>
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 10 }}>
                             {p.category && <span className="tag">{p.category}</span>}
+                            {isClosed
+                              ? <span className="tag" style={{ background: 'var(--red-light, #FFEBEE)', color: 'var(--red, #C62828)' }}>Closed</span>
+                              : <span className="tag" style={{ background: 'transparent', border: `1px solid ${fitScoreColor(score)}`, color: fitScoreColor(score) }}>🎯 Fit Score: {score}%</span>
+                            }
                           </div>
+                          {Number(p.goal_amount) > 0 && Number(p.stipend_amount) > 0 && (
+                            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--navy)', background: 'var(--bg)', borderRadius: 6, padding: '4px 8px', display: 'inline-block', marginBottom: 10 }}>
+                              Raise {yen(p.goal_amount)} → Paid {yen(p.stipend_amount)}
+                            </div>
+                          )}
                           <div className="proj-card-footer">
-                            <div><div style={{ fontSize: 11, color: 'var(--slate)' }}>Goal</div><div style={{ fontWeight: 700, fontSize: 13, color: 'var(--green-mid)' }}>{p.goal || (p.goal_amount ? `$${Number(p.goal_amount).toLocaleString()}` : '—')}</div></div>
+                            <div><div style={{ fontSize: 11, color: 'var(--slate)' }}>Goal</div><div style={{ fontWeight: 700, fontSize: 13, color: 'var(--green-mid)' }}>{p.goal_amount ? yen(p.goal_amount) : (p.goal || '—')}</div></div>
                             <div><div style={{ fontSize: 11, color: 'var(--slate)' }}>Deadline</div><div style={{ fontWeight: 700, fontSize: 13 }}>{p.deadline ? new Date(p.deadline).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—'}</div></div>
-                            {alreadyEnrolled
-                              ? <span style={{ fontSize:12, fontWeight:700, color:'var(--green-mid)' }}>✓ Enrolled</span>
-                              : <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation(); openApply(p); }}>Apply →</button>
+                            {isClosed
+                              ? <span style={{ fontSize:12, fontWeight:700, color:'var(--red, #C62828)' }}>Closed</span>
+                              : alreadyEnrolled
+                                ? <span style={{ fontSize:12, fontWeight:700, color:'var(--green-mid)' }}>✓ Enrolled</span>
+                                : <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation(); openApply(p); }}>Apply →</button>
                             }
                           </div>
                         </div>
@@ -864,12 +942,59 @@ export default function InfluencerDashboard() {
             {page === 'proj-apply' && (
               <>
                 <div className="page-header">
-                  <div className="page-title">Enroll in Campaign</div>
-                  <div className="page-subtitle">Confirm your enrollment in this project.</div>
+                  <div className="page-title">Apply &amp; Invitations</div>
+                  <div className="page-subtitle">Respond to campaign invitations from NPOs, or confirm enrollment in a project you applied to.</div>
                 </div>
                 {!influencerId && (
                   <div className="alert-banner">⚠️ You must complete registration before enrolling. <button className="btn btn-primary btn-sm" style={{ marginLeft:10 }} onClick={() => nav('reg-overview')}>Register →</button></div>
                 )}
+
+                <div className="card" style={{ marginBottom: 20 }}>
+                  <div className="card-title">Invitations from NPOs</div>
+                  <div className="card-sub">Campaigns that have invited you directly</div>
+                  {offerAcceptedSlug && (
+                    <div className="alert-banner" style={{ background:'var(--green-light)', color:'var(--green)', borderColor:'var(--green-mid)', marginBottom: 14 }}>
+                      <div style={{ marginBottom: 10 }}>✅ Invitation accepted — you're enrolled!</div>
+                      <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                        <input
+                          className="form-input"
+                          readOnly
+                          value={`${window.location.origin}/go/${offerAcceptedSlug}`}
+                          style={{ flex:1, minWidth:220, fontSize:12.5, background:'#fff' }}
+                          onFocus={e => e.target.select()}
+                        />
+                        <button className="btn btn-primary btn-sm" onClick={() => copyLink(offerAcceptedSlug)}>
+                          {copiedSlug === offerAcceptedSlug ? '✓ Copied' : '📋 Copy Link'}
+                        </button>
+                        <button className="btn btn-outline btn-sm" onClick={() => nav('proj-active')}>View My Projects →</button>
+                      </div>
+                    </div>
+                  )}
+                  {offersLoading && <div style={{ color:'var(--slate)', fontSize:13, padding:'10px 0' }}>Loading invitations…</div>}
+                  {!offersLoading && offers.length === 0 && (
+                    <div style={{ textAlign:'center', color:'var(--slate)', fontSize:13, padding:'20px 0' }}>No pending invitations. You'll see invitations from NPOs here once they invite you to a campaign.</div>
+                  )}
+                  {offers.map(o => (
+                    <div key={o.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, padding:'12px 0', borderBottom:'1px solid var(--border)' }}>
+                      <div>
+                        <div style={{ fontWeight:700, fontSize:13.5 }}>{o.title}</div>
+                        <div style={{ fontSize:12, color:'var(--slate)' }}>{o.organization} · {o.platform}</div>
+                        {Number(o.goal_amount) > 0 && Number(o.stipend_amount) > 0 && (
+                          <div style={{ fontSize:11.5, color:'var(--navy)', marginTop:2 }}>Raise {yen(o.goal_amount)} → Paid {yen(o.stipend_amount)}</div>
+                        )}
+                      </div>
+                      <div style={{ display:'flex', gap:8 }}>
+                        <button className="btn btn-primary btn-sm" disabled={offerActionId === o.id} onClick={() => respondOffer(o, 'accepted')}>
+                          {offerActionId === o.id ? '…' : '✓ Accept'}
+                        </button>
+                        <button className="btn btn-outline btn-sm" disabled={offerActionId === o.id} onClick={() => respondOffer(o, 'declined')}>
+                          ✕ Decline
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
                 {enrollSuccess && (
                   <div className="alert-banner" style={{ background:'var(--green-light)', color:'var(--green)', borderColor:'var(--green-mid)' }}>
                     <div style={{ marginBottom: enrollReferralSlug ? 10 : 0 }}>✅ Successfully enrolled!</div>
@@ -899,7 +1024,11 @@ export default function InfluencerDashboard() {
                         <div><strong>Organization:</strong> {selectedProject.organization}</div>
                         <div><strong>Platform:</strong> {selectedProject.platform}</div>
                         <div><strong>Category:</strong> {selectedProject.category}</div>
-                        <div><strong>Goal:</strong> <span style={{ color:'var(--green-mid)', fontWeight:700 }}>{selectedProject.goal || (selectedProject.goal_amount ? `$${Number(selectedProject.goal_amount).toLocaleString()}` : '—')}</span></div>
+                        <div><strong>Fit Score:</strong> <span style={{ fontWeight:700, color: fitScoreColor(fitScore(selectedProject)) }}>🎯 {fitScore(selectedProject)}% match</span></div>
+                        <div><strong>Goal:</strong> <span style={{ color:'var(--green-mid)', fontWeight:700 }}>{selectedProject.goal_amount ? yen(selectedProject.goal_amount) : (selectedProject.goal || '—')}</span></div>
+                        {Number(selectedProject.goal_amount) > 0 && Number(selectedProject.stipend_amount) > 0 && (
+                          <div><strong>Payout:</strong> <span style={{ fontWeight:700 }}>Raise {yen(selectedProject.goal_amount)} → Paid {yen(selectedProject.stipend_amount)}</span></div>
+                        )}
                         {selectedProject.deadline && <div><strong>Deadline:</strong> {new Date(selectedProject.deadline).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>}
                         {selectedProject.description && <div style={{ marginTop:8, color:'var(--slate)' }}>{selectedProject.description}</div>}
                       </div>
@@ -1042,8 +1171,13 @@ export default function InfluencerDashboard() {
                           {p.category && <span className="tag">{p.category}</span>}
                           <span className="tag" style={{ background:'var(--green-light)', color:'var(--green)' }}>✓ Enrolled</span>
                         </div>
+                        {Number(p.goal_amount) > 0 && Number(p.stipend_amount) > 0 && (
+                          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--navy)', background: 'var(--bg)', borderRadius: 6, padding: '4px 8px', display: 'inline-block', marginBottom: 10 }}>
+                            Raise {yen(p.goal_amount)} → Paid {yen(p.stipend_amount)}
+                          </div>
+                        )}
                         <div className="proj-card-footer">
-                          <div><div style={{ fontSize:11, color:'var(--slate)' }}>Goal</div><div style={{ fontWeight:700, fontSize:13, color:'var(--green-mid)' }}>{p.goal || (p.goal_amount ? `$${Number(p.goal_amount).toLocaleString()}` : '—')}</div></div>
+                          <div><div style={{ fontSize:11, color:'var(--slate)' }}>Goal</div><div style={{ fontWeight:700, fontSize:13, color:'var(--green-mid)' }}>{p.goal_amount ? yen(p.goal_amount) : (p.goal || '—')}</div></div>
                           <div><div style={{ fontSize:11, color:'var(--slate)' }}>Enrolled</div><div style={{ fontWeight:700, fontSize:13 }}>{p.enrolled_at ? new Date(p.enrolled_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—'}</div></div>
                           <button className="btn btn-outline btn-sm" onClick={() => nav('post-submit')}>Submit Post →</button>
                         </div>
@@ -1073,21 +1207,6 @@ export default function InfluencerDashboard() {
               </>
             )}
 
-            {/* ── PROJ ACCEPT ── */}
-            {page === 'proj-accept' && (
-              <>
-                <div className="page-header">
-                  <div className="page-title">Accept / Decline</div>
-                  <div className="page-subtitle">Review your campaign invitations and pending applications.</div>
-                </div>
-                <div className="card">
-                  <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--slate)', fontSize: 14 }}>
-                    No pending invitations. You'll see invitations from NPOs here once your account is approved.
-                  </div>
-                </div>
-              </>
-            )}
-
             {/* ── ANALYTICS ── */}
             {page === 'analytics' && (
               <>
@@ -1110,12 +1229,13 @@ export default function InfluencerDashboard() {
                   <div className="page-title">Earnings</div>
                   <div className="page-subtitle">Track your stipends and payout history.</div>
                 </div>
+                {earningsLoading && <div style={{ color:'var(--slate)', fontSize:13, padding:'10px 0' }}>Loading earnings…</div>}
                 <div className="grid-4" style={{ marginBottom: 20 }}>
                   {[
-                    { icon: '💰', bg: 'var(--green-light)', val: '$0', lbl: 'Total Earned' },
-                    { icon: '⏳', bg: 'var(--orange-light)', val: '$0', lbl: 'Pending Payout' },
-                    { icon: '✅', bg: 'var(--blue-light)', val: '0', lbl: 'Campaigns Completed' },
-                    { icon: '🏦', bg: '#F3E5F5', val: 'Not set', lbl: 'Bank Account' },
+                    { icon: '💰', bg: 'var(--green-light)', val: yen(earnings?.total_earned || 0), lbl: 'Total Earned' },
+                    { icon: '⏳', bg: 'var(--orange-light)', val: yen(earnings?.pending_payout || 0), lbl: 'Payment Pending' },
+                    { icon: '📅', bg: 'var(--blue-light)', val: earnings?.cutoff_date ? parseLocalDate(earnings.cutoff_date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—', lbl: 'Cut-off Date' },
+                    { icon: '🏦', bg: '#F3E5F5', val: earnings?.next_payout_date ? parseLocalDate(earnings.next_payout_date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—', lbl: 'Next Payout Date' },
                   ].map(s => (
                     <div key={s.lbl} className="stat-card">
                       <div className="stat-icon" style={{ background: s.bg }}>{s.icon}</div>
@@ -1123,11 +1243,52 @@ export default function InfluencerDashboard() {
                     </div>
                   ))}
                 </div>
+                <div style={{ background: 'var(--bg)', borderRadius: 10, padding: 14, fontSize: 12.5, color: 'var(--slate)', marginBottom: 20 }}>
+                  💡 Stipends for campaigns completed before the cut-off date are aggregated and paid on the {ordinal(earnings?.payout_day || 5)} of the following month.
+                </div>
+                <div className="card" style={{ marginBottom: 20 }}>
+                  <div className="card-title">Monthly Aggregation</div>
+                  <div className="card-sub">Stipend totals grouped by campaign completion month</div>
+                  {(!earnings?.monthly || earnings.monthly.length === 0) ? (
+                    <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--slate)', fontSize: 14 }}>No campaign activity yet.</div>
+                  ) : (
+                    <div>
+                      <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, color:'var(--slate)', padding:'6px 0', borderBottom:'1px solid var(--border)' }}>
+                        <span>Month</span><span>Campaigns</span><span>Amount</span>
+                      </div>
+                      {earnings.monthly.map(m => (
+                        <div key={`${m.year}-${m.month}`} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 0', borderBottom:'1px solid var(--border)', fontSize:13 }}>
+                          <span>{new Date(m.year, m.month - 1, 1).toLocaleDateString('en-US',{month:'long',year:'numeric'})}</span>
+                          <span>{m.count}</span>
+                          <span style={{ fontWeight:700 }}>{yen(m.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="card">
-                  <div className="card-title">Transaction History</div>
-                  <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--slate)', fontSize: 14 }}>
-                    No earnings yet. Complete campaigns to receive stipends.
-                  </div>
+                  <div className="card-title">Campaign Payout Detail</div>
+                  <div className="card-sub">Stipend status for each campaign you've enrolled in</div>
+                  {(!earnings?.campaigns || earnings.campaigns.length === 0) ? (
+                    <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--slate)', fontSize: 14 }}>
+                      No earnings yet. Complete campaigns to receive stipends.
+                    </div>
+                  ) : (
+                    <div>
+                      {earnings.campaigns.map(c => (
+                        <div key={c.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, padding:'10px 0', borderBottom:'1px solid var(--border)' }}>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontWeight:700, fontSize:13.5 }}>{c.title}</div>
+                            <div style={{ fontSize:12, color:'var(--slate)' }}>{c.organization} · {c.deadline ? new Date(c.deadline).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}</div>
+                          </div>
+                          <span className={`badge ${c.status === 'completed' ? 'badge-green' : 'badge-orange'}`}>
+                            {c.status === 'completed' ? 'Earned' : 'Pending'}
+                          </span>
+                          <span style={{ fontWeight:700, minWidth:80, textAlign:'right' }}>{yen(c.stipend_amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </>
             )}

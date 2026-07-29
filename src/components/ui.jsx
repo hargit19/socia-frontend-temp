@@ -1,4 +1,8 @@
 /* Shared low-level UI primitives used across all three dashboards */
+export function yen(amount) {
+  return `¥${Math.round(Number(amount) || 0).toLocaleString()}`;
+}
+
 export function Badge({ variant = 'gray', children }) {
   return <span className={`badge badge-${variant}`}>{children}</span>;
 }

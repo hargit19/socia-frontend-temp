@@ -3,8 +3,9 @@ import {
   approveNPO, rejectNPO, approveProject, rejectProject, approveInfluencer, rejectInfluencer,
   listNPOs, listProjects, listInfluencers, getAdminStats,
   getProjectInfluencers, getInfluencerActiveProjects, signInAdmin,
-  getLiveActivity, signUpAdmin, listAdmins,
+  getLiveActivity, signUpAdmin, listAdmins, getAdminSettings, updateAdminSettings,
 } from '../api/api';
+import { yen } from '../components/ui';
 
 const S = `
 :root{
@@ -313,6 +314,35 @@ export default function AdminDashboard() {
     } finally { setAddingAdmin(false); }
   };
 
+  // Payout & platform settings
+  const [settingsForm, setSettingsForm] = useState({ payout_day: 5, platform_fee_percent: 3.5, minimum_payout_amount: 1000, disbursement_frequency: 'Monthly' });
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+
+  useEffect(() => {
+    if (page !== 'payouts') return;
+    setSettingsLoading(true);
+    getAdminSettings()
+      .then(r => setSettingsForm(f => ({ ...f, ...r.data })))
+      .catch(() => {})
+      .finally(() => setSettingsLoading(false));
+  }, [page]);
+
+  const saveSettings = async () => {
+    setSettingsSaving(true);
+    setSettingsSaved(false);
+    try {
+      const res = await updateAdminSettings(settingsForm);
+      setSettingsForm(f => ({ ...f, ...res.data }));
+      setSettingsSaved(true);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
   if (!authUser) {
     return <><style>{S}</style><main className="auth-page"><section className="auth-card">
       <aside className="auth-side"><div><img src="/Socia Logo.png" alt="Socia" style={{ height: 32, width: 'auto' }} /><h1>Platform control center.</h1><p>Review and approve NPOs, creators, and campaigns across Socia.</p></div><small>Restricted to authorized Socia administrators</small></aside>
@@ -521,8 +551,8 @@ export default function AdminDashboard() {
                         </div>
                         <span className="badge b-teal">All time</span>
                       </div>
-                      <div style={{ fontFamily:"'Sora',sans-serif", fontSize:32, fontWeight:800, color:'var(--teal)', marginBottom:4 }}>$2.84M</div>
-                      <div style={{ fontSize:12, color:'var(--muted)', marginBottom:16 }}>↑ $184K raised this month alone</div>
+                      <div style={{ fontFamily:"'Sora',sans-serif", fontSize:32, fontWeight:800, color:'var(--teal)', marginBottom:4 }}>¥2.84M</div>
+                      <div style={{ fontSize:12, color:'var(--muted)', marginBottom:16 }}>↑ ¥184K raised this month alone</div>
                       <div className="bar-chart">
                         {[['Oct',38],['Nov',51],['Dec',43],['Jan',60],['Feb',72],['Mar',68],['Apr',95]].map(([l, h]) => (
                           <div key={l} className="bar-col">
@@ -630,7 +660,7 @@ export default function AdminDashboard() {
                     <span className="badge b-teal" style={{ fontSize:12, padding:'5px 12px' }}>● Live</span>
                   </div>
                   <div className="g4" style={{ marginBottom:20 }}>
-                    {[['🌐','rgba(15,155,142,0.1)','1,240','Sessions online now'],['💵','rgba(14,165,233,0.1)','$8,400','Raised in last hour'],['📤','rgba(124,58,237,0.1)','14','Posts submitted today'],['⏳','rgba(232,160,32,0.1)',String(totalPending),'Reviews pending']].map(([ic, bg, val, lbl]) => (
+                    {[['🌐','rgba(15,155,142,0.1)','1,240','Sessions online now'],['💵','rgba(14,165,233,0.1)','¥8,400','Raised in last hour'],['📤','rgba(124,58,237,0.1)','14','Posts submitted today'],['⏳','rgba(232,160,32,0.1)',String(totalPending),'Reviews pending']].map(([ic, bg, val, lbl]) => (
                       <div key={lbl} className="stat-mini">
                         <div className="kpi-icon" style={{ background: bg, marginBottom:0 }}>{ic}</div>
                         <div><div className="sm-val">{val}</div><div className="sm-lbl">{lbl}</div></div>
@@ -644,11 +674,11 @@ export default function AdminDashboard() {
                         {[
                           { title:'@jamie.forchange submitted Instagram Reel — Feed the Future', meta:'2 min ago', cls:'' },
                           { title:"charity: water project submitted for admin review", meta:'11 min ago', cls:'' },
-                          { title:'$1,200 donated via @sofia.creates link — Ghana School Build', meta:'18 min ago', cls:'' },
+                          { title:'¥1,200 donated via @sofia.creates link — Ghana School Build', meta:'18 min ago', cls:'' },
                           { title:'Compliance flag — HopeForward Foundation bank re-verification requested', meta:'34 min ago', cls:'wait' },
                           { title:'@noah.impact accepted "Mobile Clinics Kenya" campaign', meta:'41 min ago', cls:'' },
                           { title:'UNICEF submitted "Vaccination Drive" for review', meta:'2 hours ago', cls:'' },
-                          { title:'$8,400 creator stipend batch processed · 6 creators', meta:'3 hours ago', cls:'muted' },
+                          { title:'¥8,400 creator stipend batch processed · 6 creators', meta:'3 hours ago', cls:'muted' },
                         ].map((e, i) => (
                           <div key={i} className="tl-item">
                             <div className={`tl-dot ${e.cls}`} />
@@ -745,7 +775,7 @@ export default function AdminDashboard() {
                   <div className="g-21">
                     <div>
                       <div className="g3" style={{ marginBottom:16 }}>
-                        {[['4','Total Projects'],['$142K','Total Raised'],['23','Creators Engaged']].map(([v, l]) => (
+                        {[['4','Total Projects'],['¥142K','Total Raised'],['23','Creators Engaged']].map(([v, l]) => (
                           <div key={l} className="stat-mini"><div><div className="sm-val">{v}</div><div className="sm-lbl">{l}</div></div></div>
                         ))}
                       </div>
@@ -799,7 +829,7 @@ export default function AdminDashboard() {
                       { icon:'🤳', bg:'rgba(124,58,237,0.1)', lbl:'Total Creators', val:String(stats.total_influencers ?? 0), delta:`${stats.pending_influencers ?? 0} pending`, type:'up' },
                       { icon:'✅', bg:'rgba(15,155,142,0.1)', lbl:'KYC Approved', val:String(stats.influencers ?? 0), delta: stats.total_influencers ? `${Math.round((stats.influencers / stats.total_influencers) * 100)}%` : '0%', type:'up' },
                       { icon:'📤', bg:'rgba(232,160,32,0.12)', lbl:'Active on Campaigns', val:String(stats.active_creators ?? 0), delta:'Enrolled in a project', type:'up' },
-                      { icon:'💵', bg:'rgba(14,165,233,0.1)', lbl:'Stipends Paid Out', val:`$${(stats.stipends_paid ?? 0).toLocaleString()}`, delta:`${stats.stipends_pending_count ?? 0} pending ($${(stats.stipends_pending_amount ?? 0).toLocaleString()})`, type:'up' },
+                      { icon:'💵', bg:'rgba(14,165,233,0.1)', lbl:'Stipends Paid Out', val:yen(stats.stipends_paid ?? 0), delta:`${stats.stipends_pending_count ?? 0} pending (${yen(stats.stipends_pending_amount ?? 0)})`, type:'up' },
                     ].map(k => (
                       <div key={k.lbl} className="kpi-card">
                         <div className="kpi-icon" style={{ background: k.bg }}>{k.icon}</div>
@@ -1015,7 +1045,7 @@ export default function AdminDashboard() {
                                 <td style={{ fontWeight:600, minWidth:200 }}>{p.emoji || '🌍'} {p.title}</td>
                                 <td>{p.npo_name || p.organization}</td>
                                 <td><span className="badge b-sky">{p.platform}</span></td>
-                                <td style={{ fontWeight:700 }}>{p.goal || (p.goal_amount ? `$${Number(p.goal_amount).toLocaleString()}` : '—')}</td>
+                                <td style={{ fontWeight:700 }}>{p.goal_amount ? yen(p.goal_amount) : (p.goal || '—')}</td>
                                 <td><span className={`badge ${CATBADGE[p.category] || 'b-gray'}`}>{p.category}</span></td>
                                 <td className="td-mono">{p.deadline ? new Date(p.deadline).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}</td>
                                 <td className="td-mono">{fmt(p.reviewed_at || p.created_at)}</td>
@@ -1053,7 +1083,7 @@ export default function AdminDashboard() {
                             ['Organization', selectedProject.organization],
                             ['Platform', selectedProject.platform],
                             ['Category', selectedProject.category || '—'],
-                            ['Goal', selectedProject.goal || (selectedProject.goal_amount ? `$${Number(selectedProject.goal_amount).toLocaleString()}` : '—')],
+                            ['Goal', selectedProject.goal_amount ? yen(selectedProject.goal_amount) : (selectedProject.goal || '—')],
                             ['Deadline', selectedProject.deadline ? new Date(selectedProject.deadline).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'],
                             ['Status', selectedProject.status],
                           ].map(([k, v]) => (
@@ -1113,9 +1143,9 @@ export default function AdminDashboard() {
                   </div>
                   <div className="kpi-grid">
                     {[
-                      { icon:'💵', bg:'rgba(15,155,142,0.1)', lbl:'Total Paid Out', val:'$84K', delta:'All time', type:'up' },
-                      { icon:'⏳', bg:'rgba(232,160,32,0.12)', lbl:'Pending Payouts', val:'$12K', delta:'6 creators', type:'dn' },
-                      { icon:'🏦', bg:'rgba(14,165,233,0.1)', lbl:'Platform Fees Collected', val:'$9.8K', delta:'3.5% of disbursements', type:'up' },
+                      { icon:'💵', bg:'rgba(15,155,142,0.1)', lbl:'Total Paid Out', val:'¥84K', delta:'All time', type:'up' },
+                      { icon:'⏳', bg:'rgba(232,160,32,0.12)', lbl:'Pending Payouts', val:'¥12K', delta:'6 creators', type:'dn' },
+                      { icon:'🏦', bg:'rgba(14,165,233,0.1)', lbl:'Platform Fees Collected', val:'¥9.8K', delta:'3.5% of disbursements', type:'up' },
                       { icon:'📅', bg:'rgba(124,58,237,0.1)', lbl:'Next Batch', val:'May 1', delta:'Monthly cycle', type:'up' },
                     ].map(k => (
                       <div key={k.lbl} className="kpi-card">
@@ -1126,6 +1156,48 @@ export default function AdminDashboard() {
                       </div>
                     ))}
                   </div>
+
+                  <div className="card" style={{ marginBottom:20 }}>
+                    <div className="card-title">Payout Settings</div>
+                    <div className="card-sub">Controls when and how creator stipends are disbursed platform-wide</div>
+                    {settingsLoading ? (
+                      <div style={{ color:'var(--muted)', fontSize:13, padding:'10px 0' }}>Loading settings…</div>
+                    ) : (
+                      <>
+                        <div className="g2">
+                          <div className="fg">
+                            <label>Payout Day of Month</label>
+                            <input className="fi" type="number" min={1} max={28} value={settingsForm.payout_day}
+                              onChange={e => setSettingsForm(f => ({ ...f, payout_day: e.target.value }))} />
+                          </div>
+                          <div className="fg">
+                            <label>Disbursement Frequency</label>
+                            <select className="fi" value={settingsForm.disbursement_frequency}
+                              onChange={e => setSettingsForm(f => ({ ...f, disbursement_frequency: e.target.value }))}>
+                              {['Monthly','Bi-weekly','Weekly'].map(o => <option key={o}>{o}</option>)}
+                            </select>
+                          </div>
+                          <div className="fg">
+                            <label>Platform Fee (%)</label>
+                            <input className="fi" type="number" min={0} max={100} step={0.1} value={settingsForm.platform_fee_percent}
+                              onChange={e => setSettingsForm(f => ({ ...f, platform_fee_percent: e.target.value }))} />
+                          </div>
+                          <div className="fg">
+                            <label>Minimum Payout Amount (¥)</label>
+                            <input className="fi" type="number" min={0} value={settingsForm.minimum_payout_amount}
+                              onChange={e => setSettingsForm(f => ({ ...f, minimum_payout_amount: e.target.value }))} />
+                          </div>
+                        </div>
+                        <div className="flex ic gap12" style={{ marginTop:6 }}>
+                          <button className="btn btn-teal btn-sm" disabled={settingsSaving} onClick={saveSettings}>
+                            {settingsSaving ? 'Saving…' : '💾 Save Settings'}
+                          </button>
+                          {settingsSaved && <span style={{ color:'var(--teal)', fontSize:12.5, fontWeight:600 }}>✓ Saved</span>}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
                   <div className="card">
                     <div className="card-title" style={{ marginBottom:14 }}>Pending Creator Payouts</div>
                     <div className="tbl-wrap">
@@ -1133,9 +1205,9 @@ export default function AdminDashboard() {
                         <thead><tr><th>Creator</th><th>Campaign</th><th>Gross Stipend</th><th>Platform Fee</th><th>Net Payout</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>
                           {[
-                            ['Jamie Rivera','Ghana School Build','$400','$14','$386','Pending'],
-                            ['Sofia Chen','Feed the Future','$450','$15.75','$434.25','Pending'],
-                            ['Noah Impact','Clean Water Wells','$350','$12.25','$337.75','Processing'],
+                            ['Jamie Rivera','Ghana School Build','¥400','¥14','¥386','Pending'],
+                            ['Sofia Chen','Feed the Future','¥450','¥15.75','¥434.25','Pending'],
+                            ['Noah Impact','Clean Water Wells','¥350','¥12.25','¥337.75','Processing'],
                           ].map(([name, campaign, gross, fee, net, status]) => (
                             <tr key={name + campaign}>
                               <td style={{ fontWeight:600 }}>{name}</td>
